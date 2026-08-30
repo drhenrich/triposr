@@ -102,20 +102,27 @@ def sweep_plan(
     yaw_step_deg: float,
     scan_hz: float = 10.0,
     samples_per_second: float = 32000.0,
+    plane_overhead_s: float = 0.05,
 ) -> dict:
     """Dauer, Punktzahl und Winkelaufloesung eines Sweeps vorausberechnen.
 
-    ``yaw_step_deg`` ist der gewuenschte Abstand zwischen zwei Scanebenen.
+    Der Scanner faehrt Schritt fuer Schritt: je Ebene anfahren, einrasten,
+    genau eine LiDAR-Umdrehung erfassen. Die Dauer setzt sich deshalb aus der
+    Umdrehung (1/scan_hz) und dem Zuschlag fuer Fahrt und Einrasten zusammen -
+    siehe firmware/src/yaw_axis.h.
+
+    Der Gierbereich ist halboffen: bei 180 Grad waere es dieselbe Ebene wie
+    bei 0 Grad, weil der LiDAR in seiner Ebene bereits 360 Grad misst.
     """
     if yaw_step_deg <= 0:
         raise ValueError("yaw_step_deg muss positiv sein")
     planes = yaw_span_deg / yaw_step_deg
-    duration_s = planes / scan_hz
+    seconds_per_plane = 1.0 / scan_hz + plane_overhead_s
     samples_per_plane = samples_per_second / scan_hz
     return {
         "planes": planes,
-        "duration_s": duration_s,
-        "yaw_rate_deg_s": yaw_span_deg / duration_s if duration_s else 0.0,
+        "duration_s": planes * seconds_per_plane,
+        "seconds_per_plane": seconds_per_plane,
         "samples_per_plane": samples_per_plane,
         "total_samples": planes * samples_per_plane,
         "in_plane_resolution_deg": 360.0 / samples_per_plane,

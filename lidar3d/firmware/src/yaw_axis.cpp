@@ -1,134 +1,157 @@
 #include "yaw_axis.h"
 
 #include <Arduino.h>
-#include <TMCStepper.h>
 #include <esp_timer.h>
 
 #include "../include/config.h"
 
 namespace nwl {
 
-static TMC2209Stepper g_driver(&Serial2, TMC_RSENSE, TMC_ADDRESS);
-
 bool YawAxis::begin() {
-  pinMode(DIR_PIN, OUTPUT);
-  pinMode(ENABLE_PIN, OUTPUT);
-  pinMode(ENDSTOP_PIN, ENDSTOP_ACTIVE_LOW ? INPUT_PULLUP : INPUT_PULLDOWN);
-  enableStepper(false);
+  plan_.startQ16 = degToQ16(YAW_MIN_DEG);
+  plan_.endQ16 = degToQ16(YAW_MAX_DEG);
+  plan_.stepQ16 = degToQ16(YAW_PLANE_STEP_DEG);
 
-  Serial2.begin(TMC_BAUDRATE, SERIAL_8N1, TMC_RX_PIN, TMC_TX_PIN);
-  g_driver.begin();
-  g_driver.toff(4);
-  g_driver.rms_current(TMC_RMS_CURRENT_MA);
-  g_driver.microsteps(TMC_MICROSTEPS);
-  // StealthChop: leise und vibrationsarm. Vibration ueber das Gehaeuse ist der
-  // wichtigste Stoerfaktor fuer die Distanzmessung waehrend der Fahrt.
-  g_driver.en_spreadCycle(false);
-  g_driver.pwm_autoscale(true);
-  g_driver.intpol(true);
+  servoOk_ = servo_.begin(static_cast<uart_port_t>(SERVO_UART_NUM), SERVO_RX_PIN,
+                          SERVO_TX_PIN, SERVO_DIR_PIN, SERVO_BAUDRATE, SERVO_ID);
+  if (!servoOk_) return false;
 
-  degPerStep_ = degreesPerStep(MOTOR_FULL_STEPS, TMC_MICROSTEPS, GEAR_RATIO);
-  parkedYawQ16_ = degToQ16(YAW_MIN_DEG);
-  model_.start(esp_timer_get_time(), parkedYawQ16_, 0, +1);
+  // Lagemodus: 0..360 Grad absolut. Der Encoder ist absolut, also gibt es
+  // weder Referenzfahrt noch Endschalter.
+  if (!servo_.setMode(feetech::kModePosition)) servoOk_ = false;
+  if (!servo_.setTorque(true)) servoOk_ = false;
 
-  // Antwortet der Treiber ueber UART? version() liefert 0x21 beim TMC2209.
-  return g_driver.version() == 0x21;
-}
-
-void YawAxis::enableStepper(bool on) {
-  digitalWrite(ENABLE_PIN, on ? LOW : HIGH);  // EN ist low-aktiv
-}
-
-bool YawAxis::endstopTriggered() const {
-  int level = digitalRead(ENDSTOP_PIN);
-  return ENDSTOP_ACTIVE_LOW ? (level == LOW) : (level == HIGH);
-}
-
-void YawAxis::beginMove(double rateDegS, int8_t direction, int32_t fromQ16) {
-  digitalWrite(DIR_PIN, direction > 0 ? HIGH : LOW);
-  enableStepper(true);
-
-  double hz = stepHzForRate(rateDegS, degPerStep_);
-  // Richtungswechsel und Freigabe brauchen beim TMC2209 etwas Vorlauf.
-  delayMicroseconds(200);
-
-  if (stepPinAttached_ != STEP_PIN) {
-    ledcAttach(STEP_PIN, static_cast<uint32_t>(hz + 0.5), 8);
-    stepPinAttached_ = STEP_PIN;
-  } else {
-    ledcChangeFrequency(STEP_PIN, static_cast<uint32_t>(hz + 0.5), 8);
+  int32_t counts = 0;
+  if (servo_.readPosition(counts)) {
+    lastYawQ16_ = countsToQ16(counts, SERVO_COUNTS_PER_REV);
+    planeYawQ16_ = lastYawQ16_;
   }
-  ledcWrite(STEP_PIN, 128);  // 50 % Tastverhaeltnis
-
-  model_.start(esp_timer_get_time(), fromQ16, degPerUsQ32(degPerStep_, hz), direction);
-  moveDeadlineUs_ = esp_timer_get_time() + YAW_MOVE_TIMEOUT_MS * 1000LL;
+  return servoOk_;
 }
 
-void YawAxis::stop() {
-  if (stepPinAttached_ == STEP_PIN) ledcWrite(STEP_PIN, 0);
-  parkedYawQ16_ = yawQ16Now();
-  enableStepper(false);
-  state_ = kStateIdle;
+void YawAxis::gotoCounts(int32_t counts, uint16_t speed) {
+  if (counts < 0) counts = 0;
+  if (counts > SERVO_COUNTS_PER_REV - 1) counts = SERVO_COUNTS_PER_REV - 1;
+  goalCounts_ = counts;
+  servo_.moveTo(static_cast<uint16_t>(counts), speed, SERVO_ACCELERATION);
+  phase_ = kApproaching;
+  phaseStartUs_ = esp_timer_get_time();
+  deadlineUs_ = phaseStartUs_ + SERVO_MOVE_TIMEOUT_MS * 1000LL;
 }
 
-void YawAxis::startHoming() {
-  state_ = kStateHoming;
-  // Richtung auf den Endschalter zu; der Winkel ist waehrend des Homings
-  // unbekannt und wird am Anschlag gesetzt.
-  beginMove(YAW_HOMING_RATE_DEG_S, -1, degToQ16(YAW_MAX_DEG));
+void YawAxis::gotoPlane(uint16_t index) {
+  planeIndex_ = index;
+  gotoCounts(q16ToCounts(plan_.yawForPlane(index), SERVO_COUNTS_PER_REV),
+             SERVO_MOVE_SPEED);
 }
 
 void YawAxis::startSweep() {
-  sweepIndex_++;
-  state_ = kStateSweeping;
-  targetQ16_ = degToQ16(YAW_MAX_DEG);
-  beginMove(YAW_SWEEP_RATE_DEG_S, +1, degToQ16(YAW_MIN_DEG));
+  if (!servoOk_) return;
+  ++sweepIndex_;
+  gotoPlane(0);
 }
 
-void YawAxis::startReturn() {
-  state_ = kStateReturning;
-  targetQ16_ = degToQ16(YAW_MIN_DEG);
-  beginMove(YAW_RETURN_RATE_DEG_S, -1, yawQ16Now());
+void YawAxis::stop() {
+  phase_ = kIdle;
 }
 
-int32_t YawAxis::yawQ16At(int64_t tUs) const {
-  if (state_ == kStateIdle) return parkedYawQ16_;
-  return model_.atQ16(tUs);
+SweepState YawAxis::state() const {
+  switch (phase_) {
+    case kIdle:
+      return kStateIdle;
+    case kReturning:
+      return kStateReturning;
+    case kApproaching:
+      // Die Anfahrt auf die erste Ebene meldet sich als Referenzieren; fuer
+      // den Host sieht ein Sweep damit aus wie bisher.
+      return planeIndex_ == 0 ? kStateHoming : kStateSweeping;
+    default:
+      return kStateSweeping;
+  }
 }
 
-int32_t YawAxis::yawQ16Now() const { return yawQ16At(esp_timer_get_time()); }
+bool YawAxis::arrived(int32_t counts) const {
+  int32_t error = counts - goalCounts_;
+  if (error < 0) error = -error;
+  return error <= SERVO_ARRIVE_TOLERANCE_COUNTS;
+}
 
-void YawAxis::update() {
-  if (state_ == kStateIdle) return;
-
+bool YawAxis::pollPosition(int32_t &counts) {
   int64_t now = esp_timer_get_time();
-  if (now > moveDeadlineUs_) {
-    // Endschalter defekt oder Achse blockiert - lieber stehen bleiben.
-    stop();
-    parkedYawQ16_ = degToQ16(YAW_MIN_DEG);
+  // Den Bus nicht schneller als noetig belasten - er teilt sich die CPU mit
+  // dem LiDAR-Strom.
+  if (now - lastPollUs_ < SERVO_POLL_INTERVAL_MS * 1000LL) return false;
+  lastPollUs_ = now;
+  if (!servo_.readPosition(counts)) return false;
+  lastYawQ16_ = countsToQ16(counts, SERVO_COUNTS_PER_REV);
+  return true;
+}
+
+void YawAxis::planeCaptured() {
+  if (phase_ != kCapturing) return;
+
+  uint16_t next = static_cast<uint16_t>(planeIndex_ + 1);
+  if (next >= plan_.planeCount()) {
+    // Fertig. Zurueck auf den Anfang, damit der naechste Sweep sofort starten
+    // kann; die Rueckfahrt ist der einzige Moment, in dem Getriebespiel
+    // ueberhaupt eine Rolle spielt.
+    gotoCounts(q16ToCounts(plan_.startQ16, SERVO_COUNTS_PER_REV),
+               SERVO_RETURN_SPEED);
+    phase_ = kReturning;
     return;
   }
+  gotoPlane(next);
+}
 
-  switch (state_) {
-    case kStateHoming:
-      if (endstopTriggered()) {
-        stop();
-        parkedYawQ16_ = degToQ16(YAW_MIN_DEG);
+void YawAxis::update() {
+  if (phase_ == kIdle) return;
+
+  int64_t now = esp_timer_get_time();
+
+  switch (phase_) {
+    case kApproaching:
+    case kReturning: {
+      int32_t counts = 0;
+      bool haveCounts = pollPosition(counts);
+      if (haveCounts && arrived(counts)) {
+        if (phase_ == kReturning) {
+          phase_ = kIdle;
+        } else {
+          phase_ = kSettling;
+          phaseStartUs_ = now;
+        }
+        return;
+      }
+      if (now > deadlineUs_) {
+        // Servo antwortet nicht oder die Achse haengt - lieber abbrechen als
+        // eine Wolke mit falschen Winkeln aufnehmen.
+        phase_ = kIdle;
+      }
+      break;
+    }
+
+    case kSettling:
+      if (now - phaseStartUs_ >= PLANE_SETTLE_MS * 1000LL) {
+        // Den tatsaechlichen Winkel uebernehmen, nicht den befohlenen.
+        // Getriebespiel und Regelabweichung stehen damit in den Daten.
+        int32_t counts = 0;
+        lastPollUs_ = 0;  // eine Messung erzwingen
+        if (pollPosition(counts)) {
+          planeYawQ16_ = countsToQ16(counts, SERVO_COUNTS_PER_REV);
+        } else {
+          planeYawQ16_ = plan_.yawForPlane(planeIndex_);
+        }
+        phase_ = kCapturing;
+        phaseStartUs_ = now;
       }
       break;
 
-    case kStateSweeping:
-      if (model_.atQ16(now) >= targetQ16_) {
-        stop();
-        parkedYawQ16_ = targetQ16_;
-      }
-      break;
-
-    case kStateReturning:
-      // Der Endschalter hat das letzte Wort, der Winkel ist nur die Schaetzung.
-      if (endstopTriggered() || model_.atQ16(now) <= targetQ16_) {
-        stop();
-        parkedYawQ16_ = degToQ16(YAW_MIN_DEG);
+    case kCapturing:
+      // Normalerweise beendet main.cpp die Ebene, sobald eine volle
+      // LiDAR-Umdrehung erfasst ist. Bleiben die Umlaufmarken aus, geht es
+      // nach Ablauf der Zeit trotzdem weiter.
+      if (now - phaseStartUs_ >= PLANE_CAPTURE_TIMEOUT_MS * 1000LL) {
+        planeCaptured();
       }
       break;
 

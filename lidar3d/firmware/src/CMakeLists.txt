@@ -4,6 +4,7 @@ idf_component_register(
         "main.cpp"
         "rplidar_s2.cpp"
         "yaw_axis.cpp"
+        "feetech_servo.cpp"
         "usb_ncm.cpp"
     INCLUDE_DIRS
         "."

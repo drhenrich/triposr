@@ -126,9 +126,14 @@ verwerfen.
 | 14 | u16 | reserviert |
 | 16 | 80 | 40 × u16 Distanz in mm |
 
-Der Host interpoliert Gier- und Scanwinkel über die 40 Messungen linear. Die
-Gierspanne einer Capsule beträgt bei 10°/s nur 0,0125° — die Interpolation ist
-Feinschliff, kein Muss.
+Der Host interpoliert Gier- und Scanwinkel über die 40 Messungen linear.
+
+**Beim aktuellen Aufbau sind `yaw_start` und `yaw_end` immer gleich**, weil die
+Achse während der Messung stillsteht (Schritt und Halt, siehe
+`02-geometrie.md`). Die beiden Felder bleiben trotzdem getrennt: so bleibt das
+Protokoll für einen Aufbau mit Dauerfahrt verwendbar, ohne es zu ändern, und
+der Host muss nichts unterscheiden — die Interpolation über eine Spanne von
+null ergibt schlicht überall denselben Winkel.
 
 Bandbreite: 800 Capsules/s × 104 Byte ≈ **83 kB/s** (~666 kbit/s). Über WLAN
 unproblematisch, über BLE (realistisch 100–200 kbit/s) nicht machbar. Deshalb
@@ -147,7 +152,7 @@ doppelt konfiguriert halten muss.
 `sweep_index u16`, `state u8`, reserviert u8, `yaw_q16 u32`, `capsules u32`,
 `checksum_errors u32`, `dropped_frames u32`
 
-`state`: 0 = idle, 1 = Homing, 2 = Sweep, 3 = Rückfahrt. Alle 200 ms und bei
+`state`: 0 = idle, 1 = Anfahrt auf die erste Ebene, 2 = Sweep, 3 = Rückfahrt. Alle 200 ms und bei
 jedem Zustandswechsel. Ein STATUS mit `state == 0` nach aktiven Capsules
 beendet den Sweep — daran erkennt `collect_sweep()` das Ende.
 
@@ -156,7 +161,7 @@ Wolke hat dann Lücken.
 
 ### Kommandos vom Host
 
-Einzelne Bytes: `'S'` startet Homing und Sweep, `'X'` bricht ab. Bei
+Einzelne Bytes: `'S'` startet einen Sweep, `'X'` bricht ab. Bei
 `AUTO_START_ON_CONNECT = 1` (Standard) beginnt der Sweep schon beim Verbinden.
 
 ---

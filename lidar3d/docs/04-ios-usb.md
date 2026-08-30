@@ -71,7 +71,7 @@ Der wichtigste Punkt am Kabel, und der einzige, an dem man Hardware zerstören
 kann.
 
 * Das iPhone liefert an USB-C nur wenige Watt. Der S2 will >2 W plus
-  Anlaufstrom, der Schrittmotor 12 V. **Der Scanner muss seine eigene
+  Anlaufstrom, der Servo 12 V. **Der Scanner muss seine eigene
   Stromversorgung haben**; das Kabel überträgt nur Daten.
 * Damit hat man zwei 5-V-Quellen im Spiel — das Netzteil des Scanners und
   VBUS vom iPhone. Die dürfen sich nicht gegenseitig speisen. Wie das auf dem

@@ -83,10 +83,14 @@ public func project(capsule: CapsuleFrame,
 }
 
 /// Dauer, Punktzahl und Aufloesung eines Sweeps vorausrechnen.
+///
+/// Der Scanner arbeitet Schritt fuer Schritt: je Ebene anfahren, einrasten,
+/// genau eine LiDAR-Umdrehung erfassen. Die Dauer ist deshalb die Umdrehung
+/// (1/scanHz) plus Zuschlag fuer Fahrt und Einrasten.
 public struct SweepPlan: Sendable {
     public let planes: Float
     public let durationSeconds: Float
-    public let yawRateDegPerSecond: Float
+    public let secondsPerPlane: Float
     public let samplesPerPlane: Float
     public let totalSamples: Float
     public let inPlaneResolutionDeg: Float
@@ -94,10 +98,11 @@ public struct SweepPlan: Sendable {
     public init(yawSpanDeg: Float = 180,
                 yawStepDeg: Float = 1,
                 scanHz: Float = 10,
-                samplesPerSecond: Float = 32000) {
+                samplesPerSecond: Float = 32000,
+                planeOverheadSeconds: Float = 0.05) {
         planes = yawSpanDeg / yawStepDeg
-        durationSeconds = planes / scanHz
-        yawRateDegPerSecond = durationSeconds > 0 ? yawSpanDeg / durationSeconds : 0
+        secondsPerPlane = 1 / scanHz + planeOverheadSeconds
+        durationSeconds = planes * secondsPerPlane
         samplesPerPlane = samplesPerSecond / scanHz
         totalSamples = planes * samplesPerPlane
         inPlaneResolutionDeg = 360 / samplesPerPlane

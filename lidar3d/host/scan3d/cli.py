@@ -69,7 +69,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
     print(f"Ebenenabstand        {args.step:.3f} deg")
     print(f"Scanebenen           {info['planes']:.0f}")
     print(f"Sweep-Dauer          {info['duration_s']:.1f} s")
-    print(f"Gierrate             {info['yaw_rate_deg_s']:.3f} deg/s")
+    print(f"Zeit je Ebene        {info['seconds_per_plane'] * 1000:.0f} ms")
     print(f"Messungen je Ebene   {info['samples_per_plane']:.0f}")
     print(f"Aufloesung in Ebene  {info['in_plane_resolution_deg']:.4f} deg")
     print(f"Punkte gesamt        {info['total_samples']:.0f}")

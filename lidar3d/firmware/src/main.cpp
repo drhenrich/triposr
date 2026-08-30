@@ -26,12 +26,6 @@
 
 using namespace nwl;
 
-// Eine Capsule deckt 40 Messungen ab; bei 32000 Messungen/s sind das 1250 us.
-static const int64_t kCapsuleWindowUs = 1250;
-// Uebertragung der 84 Byte bei 1 Mbaud. Zusammen mit der internen Latenz des
-// LiDAR ein konstanter Versatz - er landet in yaw_zero der Kalibrierung.
-static const int64_t kTransmitUs = 840;
-
 struct FrameMsg {
   uint16_t len;
   uint8_t bytes[kMaxFrameSize];
@@ -48,24 +42,47 @@ static volatile uint32_t g_dropped = 0;
 static volatile bool g_scanRunning = false;
 static uint16_t g_seq = 0;
 
+// Ebenenerfassung: die Achse oeffnet das Fenster, aber gezaehlt wird erst ab
+// der ersten Umlaufmarke des LiDAR. Zwischen erster und zweiter Marke liegt
+// genau eine Umdrehung - so bekommt jede Ebene exakt 3200 Punkte, unabhaengig
+// davon, wo der Kopf beim Anhalten gerade stand.
+static bool g_planeRecording = false;
+static bool g_lastCaptureActive = false;
+
 // --- LiDAR-Seite ----------------------------------------------------------
 
 static void onCapsule(void *, const DenseCapsule &capsule) {
   CapsuleSpan span;
   if (!g_decoder.push(capsule, span)) return;  // erste Capsule wird gehalten
 
-  // Messzeitpunkt der ersten Messung dieser Capsule zurueckrechnen.
-  int64_t tStart = span.timestampUs - kTransmitUs - kCapsuleWindowUs;
+  bool capturing = g_axis.captureActive();
+  if (capturing != g_lastCaptureActive) {
+    g_lastCaptureActive = capturing;
+    g_planeRecording = false;  // neue Ebene, auf die erste Marke warten
+  }
 
   uint8_t flags = 0;
-  if (g_axis.sweepActive()) flags |= kFlagSweepActive;
   if (span.revolutionIndex >= 0) flags |= kFlagNewRevolution;
 
+  if (capturing && span.revolutionIndex >= 0) {
+    if (!g_planeRecording) {
+      g_planeRecording = true;
+    } else {
+      // Zweite Marke: die Umdrehung ist voll, weiter zur naechsten Ebene.
+      g_planeRecording = false;
+      g_axis.planeCaptured();
+    }
+  }
+  if (capturing && g_planeRecording) flags |= kFlagSweepActive;
+
+  // Die Achse steht still, waehrend gemessen wird - Anfangs- und Endwinkel
+  // der Capsule sind derselbe gemessene Wert. Deshalb braucht es hier keine
+  // Interpolation ueber Zeitstempel mehr.
+  uint32_t yaw = static_cast<uint32_t>(g_axis.planeYawQ16());
+
   FrameMsg msg;
-  msg.len = static_cast<uint16_t>(writeCapsuleFrame(
-      msg.bytes, g_seq++, flags, span,
-      static_cast<uint32_t>(g_axis.yawQ16At(tStart)),
-      static_cast<uint32_t>(g_axis.yawQ16At(tStart + kCapsuleWindowUs))));
+  msg.len = static_cast<uint16_t>(
+      writeCapsuleFrame(msg.bytes, g_seq++, flags, span, yaw, yaw));
 
   ++g_capsules;
   if (xQueueSend(g_queue, &msg, 0) != pdTRUE) {
@@ -123,10 +140,7 @@ static void netTask(void *) {
     sendStatus(client);
 
 #if AUTO_START_ON_CONNECT
-    bool sweepQueued = true;
-    g_axis.startHoming();
-#else
-    bool sweepQueued = false;
+    g_axis.startSweep();
 #endif
     SweepState lastState = g_axis.state();
     uint32_t lastStatusMs = millis();
@@ -136,23 +150,16 @@ static void netTask(void *) {
       while (client.available()) {
         int c = client.read();
         if (c == 'S') {
-          sweepQueued = true;
-          g_axis.startHoming();
+          g_axis.startSweep();
         } else if (c == 'X') {
-          sweepQueued = false;
           g_axis.stop();
         }
       }
 
-      // Homing fertig -> Sweep starten.
-      if (sweepQueued && g_axis.state() == kStateIdle) {
-        sweepQueued = false;
-        g_axis.startSweep();
-      }
-      // Sweep fertig -> zuruecksetzen und Idle melden.
-      if (lastState == kStateSweeping && g_axis.state() == kStateIdle) {
+      // Sweep fertig (inklusive Rueckfahrt) -> Idle sofort melden, damit der
+      // Host die Wolke abschliessen kann.
+      if (lastState != kStateIdle && g_axis.state() == kStateIdle) {
         sendStatus(client);
-        g_axis.startReturn();
       }
       lastState = g_axis.state();
 
@@ -209,10 +216,14 @@ void setup() {
   Serial.println("\nlidar3d - RPLIDAR S2 auf Gierachse");
 
   if (!g_axis.begin()) {
-    Serial.println("WARNUNG: TMC2209 antwortet nicht ueber UART "
-                   "(Verkabelung/Adresse pruefen). Achse laeuft mit Defaults.");
+    // Ohne Servo waeren alle Gierwinkel gelogen - lieber gar nicht scannen.
+    Serial.println("FEHLER: STS3215 antwortet nicht. Bus-ID, Baudrate (1 Mbaud), "
+                   "Halbduplex-Verdrahtung und 12-V-Versorgung pruefen.");
+    while (true) delay(1000);
   }
-  Serial.printf("Gierachse: %.4f deg je Microstep\n", g_axis.degreesPerStep());
+  Serial.printf("Gierachse: %u Ebenen a %.2f deg, Encoderaufloesung %.4f deg\n",
+                g_axis.planeCount(), YAW_PLANE_STEP_DEG,
+                360.0 / SERVO_COUNTS_PER_REV);
 
   if (!g_lidar.begin(static_cast<uart_port_t>(LIDAR_UART_NUM), LIDAR_RX_PIN,
                      LIDAR_TX_PIN, LIDAR_BAUDRATE, LIDAR_RX_BUFFER)) {

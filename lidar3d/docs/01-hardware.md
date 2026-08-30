@@ -6,14 +6,16 @@
 |---|---|
 | RPLIDAR S2 | 190 g, 77 × 77 × 38,85 mm, 5 V, >2 W, TTL-UART 3,3 V @ 1 MBaud |
 | ESP32-S3 DevKitC-1 | zwei Kerne, genug RAM für die Queue, 3,3-V-UART |
-| TMC2209 Steppertreiber | Schrittmodul mit UART-Anschluss (BigTreeTech/Fysetc) |
-| NEMA17 Schrittmotor | 200 Vollschritte, ~1,0 A Nennstrom, 40–48 mm |
-| GT2-Riemen + 20T/60T Riemenscheiben | 3:1 Untersetzung |
+| Feetech STS3215 Busservo | 12 V, 30 kg·cm, 1:345, 12-bit-Absolutencoder, TTL halbduplex |
+| Bustreiber für den Servo | Feetech FE-URT-1 oder ein 74HC241 — oder der ESP32 schaltet die Richtung selbst, siehe unten |
 | Rillenkugellager 6808 o. ä. | großer Innendurchmesser, damit das Kabel mittig durchgeht |
-| Optischer Endschalter oder Hallsensor | Referenzpunkt der Gierachse |
 | Netzteil 12 V / ≥3 A | |
 | Step-Down 12 V → 5 V, ≥2 A | für LiDAR und ESP32 |
 | Elko 470–1000 µF am 5-V-Zweig | fängt den Anlaufstrom des LiDAR-Motors ab |
+
+Was gegenüber einem Schrittmotoraufbau **entfällt**: Steppertreiber, NEMA17,
+Riemen, beide Riemenscheiben und der Endschalter. Der Encoder des STS3215 ist
+absolut — es gibt keine Referenzfahrt und keinen verlorenen Schritt.
 
 ## Mechanik
 
@@ -35,9 +37,10 @@ nur um sich selbst und gewinnt keine dritte Dimension.
         └───────────┼───────────┘
                     │
               ╔═════╧═════╗
-              ║  60T      ║  Riemenscheibe, 3:1
+              ║  Lager    ║  nimmt Gewicht und Moment auf
+              ╠═══════════╣
+              ║  STS3215  ║  liefert nur das Drehmoment
               ╚═══════════╝
-                 NEMA17
 ```
 
 **Kein Schleifring.** Weil der LiDAR in seiner Ebene schon 360° misst, genügt
@@ -46,17 +49,31 @@ ein Gierbereich von 180° für die volle Kugel (Herleitung in
 läuft durch das hohle Lager nach unten. Bei ~1 A Versorgungsstrom wäre ein
 Schleifring das teuerste und unzuverlässigste Bauteil im ganzen Aufbau.
 
-**Warum 3:1 und nicht direkt gekoppelt.** Zwei Gründe. Erstens Auflösung:
-200 Vollschritte × 16 Microsteps × 3 = 9600 Schritte pro Umdrehung, also
-0,0375° pro Schritt. Zweitens — und wichtiger — Vibration. 190 g auf einem
-Ausleger sind eine träge Masse; die Rastmomente eines direkt gekoppelten
-Motors gehen ungedämpft in den Sensor und verrauschen die Distanzmessung.
-Der Riemen dämpft, und der Motor läuft bei gleicher Gierrate dreimal
-schneller, also weiter weg von seinen Resonanzen im unteren Drehzahlbereich.
+**Der Servo trägt nicht, er dreht nur.** Das ist die wichtigste mechanische
+Regel hier. 190 g auf einem Ausleger erzeugen ein Kippmoment, das nichts auf
+der Servo-Abtriebswelle zu suchen hat — die ist auf Drehmoment ausgelegt, nicht
+auf Querkraft. Das Rillenkugellager nimmt Gewicht und Moment auf, der Servo
+greift nur an. Ohne Lager verschleißt das Getriebe, und das Spiel wächst.
 
-Bei 10°/s Gierrate ergibt das eine STEP-Frequenz von
-10 / 0,0375 = **266,7 Hz** — sehr langsam und mit StealthChop praktisch
-lautlos.
+**Schritt und Halt statt Dauerfahrt.** Die Achse dreht nicht kontinuierlich,
+sondern fährt Ebene für Ebene an, rastet ein und lässt genau eine
+LiDAR-Umdrehung aufnehmen. Der Grund: 10°/s wären 3,7 % der Leerlaufdrehzahl
+des Servos (270°/s bei 12 V), und so weit unten regelt ein 1:345-Getriebe
+schlecht. Begründung und Konsequenzen stehen in `firmware/src/yaw_axis.h`.
+
+Nebeneffekt: Getriebevibration stört nicht, weil während der Messung
+stillgestanden wird. Bei einem Schrittmotor mit Dauerfahrt wäre das der
+wichtigste Störeinfluss gewesen.
+
+**Auflösung.** 4096 Zählwerte auf 360° sind 0,0879° je Zählwert. Bei 1°
+Ebenenabstand ist das reichlich; relevant würde es erst unter ~0,2°.
+
+**Getriebespiel.** Das ist der Punkt, den man beim STS3215 messen sollte. Zwei
+Entschärfungen: der Encoder sitzt auf der Abtriebswelle, misst also den echten
+Ausgangswinkel und nicht die Motorstellung; und der Sweep läuft nur in eine
+Richtung, Spiel schlägt allein bei der Rückfahrt zu. Die Firmware übernimmt
+zusätzlich den **gemessenen** Winkel je Ebene, nicht den befohlenen — eine
+bleibende Regelabweichung landet damit in den Daten statt im Fehler.
 
 **Auswuchten.** Das optische Zentrum des S2 möglichst nah an die Drehachse
 setzen. Jeder radiale Versatz erzeugt Unwucht *und* muss später
@@ -81,21 +98,31 @@ S2 wird üblicherweise mit einem Adapterboard ausgeliefert, das GND, 5 V, TX
 und RX herausführt. Vor dem ersten Anschließen mit dem Datenblatt abgleichen —
 diese Belegung hier nicht aus dem Kopf annehmen.
 
-### TMC2209 ↔ ESP32-S3
+### STS3215 ↔ ESP32-S3
 
-| TMC2209 | ESP32-S3 |
+Der Servo hat einen **halbduplexen** Ein-Draht-Bus: Senden und Empfangen
+teilen sich dieselbe Leitung. Zwei Wege, das anzuschließen:
+
+**a) Der ESP32 schaltet selbst** (`SERVO_DIR_PIN 7` in `config.h`). Die
+Firmware setzt die UART in den RS485-Halbduplexmodus; der Pin steuert dann
+einen Transceiver, und der Empfang ist während des Sendens abgeschaltet — das
+eigene Echo landet gar nicht erst im Puffer.
+
+**b) Ein Adapterboard übernimmt es** (Feetech FE-URT-1 o. ä.). Dann
+`SERVO_DIR_PIN` auf `-1` setzen.
+
+| Signal | ESP32-S3 |
 |---|---|
-| STEP | GPIO 5 |
-| DIR | GPIO 6 |
-| EN | GPIO 7 (low-aktiv) |
-| UART (PDN) | GPIO 15 / 16 über 1 kΩ |
-| VM / GND | 12 V |
-| MS1, MS2 | GND (Adresse 0b00) |
+| Servo-Bus TX | GPIO 15 |
+| Servo-Bus RX | GPIO 16 |
+| Richtungsumschaltung (DE/RE) | GPIO 7, oder −1 bei externem Adapter |
+| Servo-Versorgung | 12 V, gemeinsame Masse |
 
-Microstepping wird über UART gesetzt, nicht über MS1/MS2 — die beiden Pins
-legen nur die UART-Adresse fest.
+Bus-Baudrate 1 MBaud, Servo-ID 1 (Werkseinstellung).
 
-Endschalter an GPIO 4 gegen GND, interner Pullup ist in der Firmware aktiviert.
+Beides ist in `config.h` einstellbar. **Register unter Adresse 40 nicht
+blind beschreiben** — dort liegen ID (5) und Baudrate (6) im EPROM, ein
+Fehlgriff macht den Servo unerreichbar. Die Firmware fasst sie nicht an.
 
 ## Stromversorgung
 
@@ -112,10 +139,11 @@ Regeln:
   den 5-V-Pin des ESP32-Devkits und schon gar nicht dessen 3,3-V-Regler.
 * Elko 470–1000 µF direkt am 5-V-Eingang des LiDAR. Der Anlaufstrom des
   Motors reißt sonst die Spannung ein, und der LiDAR bootet mitten im Sweep neu.
-* Der Motor läuft an 12 V, der TMC2209 mit 600 mA RMS. Das reicht für die
-  Last und hält den Treiber kühl.
+* Der Servo läuft an 12 V. Im Leerlauf zieht er nur 180 mA, blockiert aber
+  2,7 A — das Netzteil muss die Spitze beim Anfahren liefern können, sonst
+  bricht die Spannung ein und der ESP32 startet neu.
 * Masse sternförmig auf einen Punkt. Ein 1-MBaud-UART verzeiht keine
-  Masseschleifen.
+  Masseschleifen — und hier laufen zwei davon.
 
 ## Inbetriebnahme, der Reihe nach
 
@@ -124,10 +152,15 @@ Regeln:
    Bei `--yaw-rate 0` bleibt der Gierwinkel 0 und die Punktwolke ist ein
    flacher Ring — genau richtig, um Reichweite und Ausfälle zu prüfen. Die
    Pruefsummenfehler in der Ausgabe müssen bei ~0 liegen.
-2. **Nur die Achse.** LiDAR abziehen, Firmware flashen, Homing und Sweep
-   beobachten. Die Achse muss gleichmäßig und leise laufen; ruckelt sie,
-   stimmt der Motorstrom oder die Untersetzung nicht.
-3. **Beides zusammen**, aber ohne Drehung (`YAW_SWEEP_RATE_DEG_S` klein).
-   Prüfen, dass `dropped_frames` im Status 0 bleibt.
-4. **Kalibrieren**, siehe `02-geometrie.md`.
-5. **Erster echter Sweep.**
+2. **Nur der Servo.** LiDAR abziehen, Firmware flashen. Antwortet der Servo
+   nicht, bricht die Firmware mit einer Meldung ab, statt eine Wolke mit
+   erfundenen Winkeln aufzunehmen. Prüfen: Bus-ID (Werk: 1), 1 MBaud,
+   Halbduplex-Verdrahtung, 12 V.
+3. **Getriebespiel messen.** Servo auf eine Position fahren, von Hand leicht
+   in beide Richtungen drücken und die zurückgemeldete Position ablesen. Die
+   Differenz ist das Spiel; sie geht als Rauschen in den Gierwinkel ein.
+4. **Beides zusammen**, aber mit grobem Ebenenabstand
+   (`YAW_PLANE_STEP_DEG 10.0`) für einen schnellen Durchlauf. Prüfen, dass
+   `dropped_frames` im Status 0 bleibt.
+5. **Kalibrieren**, siehe `02-geometrie.md`.
+6. **Erster echter Sweep.**

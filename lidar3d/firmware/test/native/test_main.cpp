@@ -16,9 +16,11 @@
 #include <string>
 #include <vector>
 
+#include "../../src/angle_util.h"
 #include "../../src/dense_capsule.h"
+#include "../../src/feetech_bus.h"
 #include "../../src/stream_proto.h"
-#include "../../src/yaw_model.h"
+#include "../../src/sweep_plan.h"
 
 using namespace nwl;
 
@@ -298,37 +300,192 @@ static void testDecoderRevolutionUnaligned() {
   CHECK(first > 0);
 }
 
-static void testYawModel() {
-  CASE("Gier: Festkommamathematik");
-  // NEMA17, 1/16 Microstepping, 3:1 Riemen -> 9600 Schritte je Umdrehung
-  double dps = degreesPerStep(200, 16, 3.0);
-  CHECK(std::fabs(dps - 0.0375) < 1e-9);
+// --- Gierachse: Encoderumrechnung und Sweep-Plan --------------------------
 
-  double hz = stepHzForRate(10.0, dps);
-  CHECK(std::fabs(hz - 266.666666) < 1e-4);
+static void testAngleUtil() {
+  CASE("Gier: Encoderzaehlwerte <-> Grad");
+  const int32_t kCounts = 4096;  // STS3215, 12 Bit absolut
 
-  YawModel model;
-  model.start(1000000, degToQ16(0.0), degPerUsQ32(dps, hz), +1);
+  CHECK_EQ(countsToQ16(kCounts, kCounts), 360 << 16);
+  CHECK_EQ(countsToQ16(kCounts / 4, kCounts), 90 << 16);
+  CHECK_EQ(countsToQ16(0, kCounts), 0);
 
-  // Nach 18 s muessen 180 deg erreicht sein (auf 0.01 deg genau).
-  double after18s = q16ToDeg(model.atQ16(1000000 + 18000000));
-  CHECK(std::fabs(after18s - 180.0) < 0.01);
+  // Ein Zaehlwert entspricht 360/4096 = 0.087890625 Grad.
+  CHECK(std::fabs(q16ToDeg(countsToQ16(1, kCounts)) - 0.087890625) < 1e-6);
 
-  double after1ms = q16ToDeg(model.atQ16(1000000 + 1000));
-  CHECK(std::fabs(after1ms - 0.01) < 1e-4);
+  CHECK_EQ(q16ToCounts(degToQ16(180.0), kCounts), 2048);
+  CHECK_EQ(q16ToCounts(degToQ16(0.0), kCounts), 0);
+  // 1 Grad sind 11.38 Zaehlwerte, wird kaufmaennisch gerundet.
+  CHECK_EQ(q16ToCounts(degToQ16(1.0), kCounts), 11);
+  CHECK_EQ(q16ToCounts(degToQ16(-1.0), kCounts), -11);
 
-  int64_t tEnd = model.timeForQ16(degToQ16(180.0));
-  CHECK(std::llabs(tEnd - (1000000 + 18000000)) < 2000);
+  // Hin und zurueck bleibt innerhalb eines Zaehlwerts.
+  for (int32_t counts = 0; counts < kCounts; counts += 137) {
+    CHECK_EQ(q16ToCounts(countsToQ16(counts, kCounts), kCounts), counts);
+  }
 }
 
-static void testYawModelReverse() {
-  CASE("Gier: Rueckwaertsfahrt");
-  double dps = degreesPerStep(200, 16, 3.0);
-  YawModel model;
-  model.start(0, degToQ16(180.0), degPerUsQ32(dps, stepHzForRate(60.0, dps)), -1);
-  double after1s = q16ToDeg(model.atQ16(1000000));
-  CHECK(std::fabs(after1s - 120.0) < 0.01);
-  CHECK(std::llabs(model.timeForQ16(degToQ16(0.0)) - 3000000) < 3000);
+static void testSweepPlan() {
+  CASE("Sweep: Ebenen bei halboffenem Bereich");
+  SweepPlan plan;  // 0..180 Grad in 1-Grad-Schritten
+  CHECK_EQ(plan.planeCount(), 180);
+  CHECK_EQ(plan.yawForPlane(0), 0);
+  CHECK_EQ(plan.yawForPlane(1), degToQ16(1.0));
+  // Kernpunkt: die letzte Ebene liegt bei 179, nicht bei 180 Grad. Bei 180
+  // waere es dieselbe Ebene wie bei 0, weil der LiDAR 360 Grad misst.
+  CHECK_EQ(plan.yawForPlane(179), degToQ16(179.0));
+  CHECK(plan.yawForPlane(plan.planeCount()) == plan.endQ16);
+
+  SweepPlan fine;
+  fine.stepQ16 = degToQ16(0.5);
+  CHECK_EQ(fine.planeCount(), 360);
+
+  SweepPlan quarter;
+  quarter.endQ16 = degToQ16(90.0);
+  CHECK_EQ(quarter.planeCount(), 90);
+}
+
+static void testSweepPlanDegenerate() {
+  CASE("Sweep: unsinnige Bereiche liefern null Ebenen");
+  SweepPlan zeroStep;
+  zeroStep.stepQ16 = 0;
+  CHECK_EQ(zeroStep.planeCount(), 0);
+
+  SweepPlan reversed;
+  reversed.startQ16 = degToQ16(180.0);
+  reversed.endQ16 = degToQ16(0.0);
+  CHECK_EQ(reversed.planeCount(), 0);
+
+  SweepPlan empty;
+  empty.endQ16 = empty.startQ16;
+  CHECK_EQ(empty.planeCount(), 0);
+}
+
+// --- Feetech-Busprotokoll -------------------------------------------------
+
+static void testFeetechPacketLayout() {
+  CASE("Feetech: Paketaufbau und Pruefsumme");
+  uint8_t buf[feetech::kMaxPacketSize];
+
+  // Drehmoment einschalten: FF FF 01 04 03 28 01 CE
+  size_t n = feetech::buildWrite8(buf, 1, feetech::kRegTorqueEnable, 1);
+  CHECK_EQ(n, 8u);
+  CHECK(toHex(buf, n) == "ffff0104032801ce");
+
+  // Istposition lesen: FF FF 01 04 02 38 02 BE
+  n = feetech::buildRead(buf, 1, feetech::kRegPresentPositionL, 2);
+  CHECK_EQ(n, 8u);
+  CHECK(toHex(buf, n) == "ffff0104023802be");
+
+  // Ping: FF FF 01 02 01 FB
+  n = feetech::buildPing(buf, 1);
+  CHECK_EQ(n, 6u);
+  CHECK(toHex(buf, n) == "ffff010201fb");
+}
+
+static void testFeetechMovePacket() {
+  CASE("Feetech: Fahrbefehl schreibt ACC..GOAL_SPEED am Stueck");
+  uint8_t buf[feetech::kMaxPacketSize];
+  size_t n = feetech::buildMove(buf, 1, 1024, 1000, 50);
+
+  CHECK_EQ(n, 14u);
+  CHECK_EQ(buf[2], 1);                            // ID
+  CHECK_EQ(buf[3], 10);                           // LEN = 7 Daten + reg + 2
+  CHECK_EQ(buf[4], feetech::kWrite);
+  CHECK_EQ(buf[5], feetech::kRegAcc);             // 41, danach 42..47
+  CHECK_EQ(buf[6], 50);                           // ACC
+  CHECK_EQ(feetech::get16(buf + 7), 1024);        // Zielposition, little endian
+  CHECK_EQ(feetech::get16(buf + 9), 0);           // GOAL_TIME = 0
+  CHECK_EQ(feetech::get16(buf + 11), 1000);       // Zieldrehzahl
+  CHECK_EQ(buf[13], feetech::checksum(buf, 13));
+  CHECK(toHex(buf, n) == "ffff010a03293200040000e803a7");
+}
+
+static void testFeetechSignedValues() {
+  CASE("Feetech: Vorzeichen steckt in Bit 15, nicht im Zweierkomplement");
+  CHECK_EQ(feetech::decodeSigned(0), 0);
+  CHECK_EQ(feetech::decodeSigned(1000), 1000);
+  CHECK_EQ(feetech::decodeSigned(0x8000 | 1000), -1000);
+  CHECK_EQ(feetech::decodeSigned(0x7FFF), 32767);
+  CHECK_EQ(feetech::decodeSigned(0x8001), -1);
+}
+
+// Baut ein gueltiges Statuspaket: FF FF ID LEN ERR PARAM... CHK
+static std::vector<uint8_t> buildStatus(uint8_t id, uint8_t error,
+                                        const std::vector<uint8_t> &params) {
+  std::vector<uint8_t> packet = {0xFF, 0xFF, id,
+                                 static_cast<uint8_t>(params.size() + 2), error};
+  packet.insert(packet.end(), params.begin(), params.end());
+  packet.push_back(feetech::checksum(packet.data(), packet.size()));
+  return packet;
+}
+
+static void testFeetechStatusParser() {
+  CASE("Feetech: Statuspakete lesen");
+  feetech::StatusParser parser;
+  feetech::StatusPacket packet;
+
+  auto raw = buildStatus(1, 0, {0x00, 0x04});  // Position 1024
+  bool got = false;
+  for (uint8_t b : raw) got = parser.push(b, packet) || got;
+  CHECK(got);
+  CHECK_EQ(packet.id, 1);
+  CHECK_EQ(packet.error, 0);
+  CHECK_EQ(packet.paramCount, 2);
+  CHECK_EQ(feetech::get16(packet.params), 1024);
+}
+
+static void testFeetechStatusParserRobustness() {
+  CASE("Feetech: Muell, Echo und kaputte Pruefsummen");
+  feetech::StatusParser parser;
+  feetech::StatusPacket packet;
+
+  // Halbduplex: erst das eigene Echo, dann die Antwort. Beides muss
+  // durchlaufen, ohne dass die Antwort verloren geht.
+  uint8_t request[feetech::kMaxPacketSize];
+  size_t reqLen = feetech::buildRead(request, 1, feetech::kRegPresentPositionL, 2);
+  auto response = buildStatus(1, 0, {0x34, 0x12});
+
+  std::vector<uint8_t> stream(request, request + reqLen);
+  stream.insert(stream.end(), response.begin(), response.end());
+
+  int packets = 0;
+  for (uint8_t b : stream) {
+    if (parser.push(b, packet)) ++packets;
+  }
+  // Das Echo ist selbst ein gueltig gerahmtes Paket, deshalb koennen zwei
+  // durchkommen; entscheidend ist, dass das letzte die Antwort ist.
+  CHECK(packets >= 1);
+  CHECK_EQ(feetech::get16(packet.params), 0x1234);
+
+  // Kaputte Pruefsumme wird verworfen, das folgende Paket wieder gefunden.
+  feetech::StatusParser second;
+  auto broken = buildStatus(1, 0, {0x00, 0x04});
+  broken.back() ^= 0xFF;
+  auto good = buildStatus(1, 0, {0x11, 0x22});
+  std::vector<uint8_t> mixed(broken.begin(), broken.end());
+  mixed.insert(mixed.end(), good.begin(), good.end());
+
+  int accepted = 0;
+  for (uint8_t b : mixed) {
+    if (second.push(b, packet)) ++accepted;
+  }
+  CHECK_EQ(accepted, 1);
+  CHECK_EQ(second.checksumErrors(), 1u);
+  CHECK_EQ(feetech::get16(packet.params), 0x2211);
+
+  // Mehrere Kopfbytes hintereinander duerfen nicht als ID durchgehen.
+  feetech::StatusParser third;
+  std::vector<uint8_t> padded = {0xFF, 0xFF, 0xFF};
+  auto tail = buildStatus(2, 0, {0x07});
+  padded.insert(padded.end(), tail.begin() + 2, tail.end());
+  int found = 0;
+  for (uint8_t b : padded) {
+    if (third.push(b, packet)) ++found;
+  }
+  CHECK_EQ(found, 1);
+  CHECK_EQ(packet.id, 2);
+  CHECK_EQ(packet.params[0], 7);
 }
 
 static void testWireFormat(const char *fixturePath) {
@@ -377,8 +534,14 @@ int main(int argc, char **argv) {
   testDecoderInterpolation();
   testDecoderRevolutionAligned();
   testDecoderRevolutionUnaligned();
-  testYawModel();
-  testYawModelReverse();
+  testAngleUtil();
+  testSweepPlan();
+  testSweepPlanDegenerate();
+  testFeetechPacketLayout();
+  testFeetechMovePacket();
+  testFeetechSignedValues();
+  testFeetechStatusParser();
+  testFeetechStatusParserRobustness();
   testWireFormat(fixture);
 
   std::printf("\n%d Pruefungen, %d Fehler\n", g_checks, g_failures);

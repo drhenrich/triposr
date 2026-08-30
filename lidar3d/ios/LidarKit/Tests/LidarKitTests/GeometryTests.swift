@@ -68,11 +68,17 @@ final class GeometryTests: XCTestCase {
     func testSweepPlan() {
         let plan = SweepPlan(yawSpanDeg: 180, yawStepDeg: 1)
         XCTAssertEqual(plan.planes, 180)
-        XCTAssertEqual(plan.durationSeconds, 18, accuracy: 1e-4)
-        XCTAssertEqual(plan.yawRateDegPerSecond, 10, accuracy: 1e-4)
+        // Je Ebene eine Umdrehung (100 ms) plus Fahrt und Einrasten (50 ms).
+        XCTAssertEqual(plan.secondsPerPlane, 0.15, accuracy: 1e-5)
+        XCTAssertEqual(plan.durationSeconds, 27, accuracy: 1e-3)
         XCTAssertEqual(plan.samplesPerPlane, 3200, accuracy: 1e-4)
         XCTAssertEqual(plan.totalSamples, 576000, accuracy: 1)
         XCTAssertEqual(plan.inPlaneResolutionDeg, 0.1125, accuracy: 1e-6)
+    }
+
+    func testSweepPlanWithoutOverheadIsPureMeasurementTime() {
+        let plan = SweepPlan(yawSpanDeg: 180, yawStepDeg: 1, planeOverheadSeconds: 0)
+        XCTAssertEqual(plan.durationSeconds, 18, accuracy: 1e-3)
     }
 
     func testRangeFilterRejectsBlindZoneAndDropouts() {

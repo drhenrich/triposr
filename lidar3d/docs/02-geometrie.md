@@ -73,34 +73,43 @@ Zwei Gegenmittel:
 * Feinerer Ebenenabstand, wenn der Äquator wichtig ist — kostet linear Zeit
   (`python3 -m scan3d plan --step 0.5`).
 
-## Zeitsynchronisation
+## Wie die Messung zu ihrem Gierwinkel kommt
 
-Jede Messung braucht den Gierwinkel zum Messzeitpunkt. Die Firmware macht das
-so:
+Gar nicht über die Zeit — die Achse **steht**, während gemessen wird.
 
-1. LEDC erzeugt eine **feste** STEP-Frequenz in Hardware. Die Achse läuft damit
-   exakt gleichförmig, und der Gierwinkel ist linear in der Zeit — es müssen
-   keine Schritte gezählt werden (`firmware/src/yaw_model.h`).
-2. Jede Dense-Capsule bekommt beim Empfang einen Zeitstempel. Der Parser
-   rechnet dabei die Byteposition heraus: bei 1 MBaud dauert ein Byte 10 µs,
-   also lässt sich für jede Capsule in einem Lesevorgang der Empfangszeitpunkt
-   auf wenige Mikrosekunden genau rekonstruieren.
-3. Aus dem Zeitstempel wird der Gierwinkel der ersten und der letzten Messung
-   der Capsule berechnet und mitgesendet; der Host interpoliert dazwischen.
+Der Ablauf je Scanebene (`firmware/src/yaw_axis.h`):
 
-Wie genau muss das sein? Bei 10°/s Gierrate:
+1. Servo auf die nächste Ebene fahren und ankommen lassen.
+2. 40 ms einrasten lassen, damit Getriebe und Lageregelung zur Ruhe kommen.
+3. **Istposition vom Absolutencoder lesen.** Dieser gemessene Wert ist der
+   Gierwinkel der Ebene — nicht der befohlene. Getriebespiel und bleibende
+   Regelabweichung stehen damit in den Daten statt im Fehler.
+4. Genau eine LiDAR-Umdrehung erfassen. Erkannt wird sie an den Umlaufmarken
+   des Dekoders: zwischen der ersten und der zweiten Marke liegt exakt eine
+   Umdrehung, unabhängig davon, wo der Kopf beim Anhalten gerade stand. So
+   bekommt jede Ebene genau 3200 Punkte.
+5. Weiter zur nächsten Ebene.
 
-| Zeitfehler | Gierfehler |
+Alle 3200 Messungen einer Ebene tragen denselben Gierwinkel; im Frameprotokoll
+sind `yaw_start` und `yaw_end` deshalb gleich.
+
+**Das ist der Grund, warum es hier keine Zeitsynchronisation gibt.** Bei
+Rotationsscannern mit Dauerfahrt ist die Zuordnung von Messzeitpunkt zu
+Drehwinkel die Hauptfehlerquelle: Latenz, Jitter, verlorene Schritte,
+Geschwindigkeitsschwankungen. Bei Schritt und Halt existiert die Frage nicht.
+
+Der Preis: ein Sweep dauert rund 27 statt 18 Sekunden
+(`python3 -m scan3d plan`).
+
+Was stattdessen zählt:
+
+| Fehlerquelle | Größenordnung |
 |---|---|
-| 1 ms | 0,01° |
-| 10 ms | 0,1° |
-| 100 ms | 1,0° |
+| Encoderauflösung | 0,088° (4096 Zählwerte auf 360°) |
+| Getriebespiel | zu messen, siehe `01-hardware.md` |
+| Restschwingung nach dem Anfahren | von der Einrastzeit abgedeckt |
 
-Selbst 10 ms Jitter bleiben unter dem Ebenenabstand. **Die Zeitsynchronisation
-ist bei diesem Aufbau unkritisch** — was angenehm ist, weil sie bei
-Rotationsscannern sonst die Hauptfehlerquelle darstellt. Der konstante Anteil
-der Latenz (interne Verarbeitungszeit des LiDAR plus Übertragung) ist ein
-fester Versatz und verschwindet in `yaw_zero` der Kalibrierung.
+Die ersten beiden liegen deutlich unter dem Ebenenabstand von 1°.
 
 ## Kalibrierung
 
@@ -148,19 +157,28 @@ Bodenplatte). Mit dem Messschieber abnehmen und eintragen.
 ### 4. `yaw_zero` — die Nordrichtung
 
 Verzerrt ebenfalls nichts, dreht nur die ganze Wolke. Relevant, wenn mehrere
-Sweeps zusammenpassen sollen. Der Endschalter definiert diesen Nullpunkt
-mechanisch; Wiederholgenauigkeit ist wichtiger als der Absolutwert.
+Sweeps zusammenpassen sollen. Beim STS3215 definiert der Absolutencoder
+diesen Nullpunkt von selbst und reproduzierbar ueber Neustarts hinweg - eine
+mechanische Referenz braucht es nicht.
 
-### 5. Gierrate
+### 5. Encoderskalierung
 
-Zu prüfen, wenn die Wolke *entlang der Drehung* geschert wirkt: ein senkrechter
-Türrahmen erscheint dann schraubenförmig verdreht. Ursache ist fast immer eine
-falsch eingetragene Untersetzung oder Microstep-Zahl in `config.h`, nicht die
-Zeitmessung. Gegenprobe: zwei Sweeps hintereinander in entgegengesetzter
-Richtung — bei falscher Rate laufen sie in unterschiedliche Richtungen
-auseinander.
+Zu prüfen, wenn die Wolke *entlang der Drehung* gestaucht oder gedehnt wirkt:
+ein rechtwinkliger Raum erscheint dann keilförmig, oder die letzte Scanebene
+trifft nicht auf die erste. Ursache wäre ein falscher
+`SERVO_COUNTS_PER_REV` in `config.h` — beim STS3215 sind es 4096.
+
+Gegenprobe ohne Rechnerei: einen Sweep über volle 180° in einem Raum mit zwei
+gegenüberliegenden parallelen Wänden aufnehmen. Stehen die beiden Wände in der
+Punktwolke parallel, stimmt die Skalierung.
+
+Anders als beim Schrittmotor kann die Achse hier nicht „danebenliegen", ohne
+dass es auffällt: der Winkel wird gemessen, nicht hochgerechnet. Ein
+systematischer Fehler kann nur noch aus einer falschen Zählwert-Konstante
+kommen.
 
 ## Reihenfolge
 
-`alpha_sign` → `alpha_zero` → `offset_radial` → Gierrate → `offset_axial` →
-`yaw_zero`. Die ersten drei bestimmen die Form, die letzten drei nur die Lage.
+`alpha_sign` → `alpha_zero` → `offset_radial` → Encoderskalierung →
+`offset_axial` → `yaw_zero`. Die ersten drei bestimmen die Form, die letzten
+drei nur die Lage.

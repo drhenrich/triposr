@@ -19,39 +19,46 @@
 // 10 Hz Scanrate = 600 rpm. Erlaubt sind laut Datenblatt 8..15 Hz.
 #define LIDAR_RPM 600
 
-// --- Gierachse: Schrittmotor ---------------------------------------------
-#define STEP_PIN 5
-#define DIR_PIN 6
-#define ENABLE_PIN 7   // TMC2209 EN ist low-aktiv
-#define ENDSTOP_PIN 4  // gegen GND schaltend, interner Pullup
-#define ENDSTOP_ACTIVE_LOW 1
+// --- Gierachse: Feetech STS3215 Busservo ---------------------------------
+// Halbduplex-TTL-Bus. Liegt SERVO_DIR_PIN >= 0, schaltet der ESP32 die
+// Richtung selbst (RS485-Halbduplexmodus, blendet das eigene Echo aus);
+// auf -1 setzen, wenn ein Adapterboard wie das FE-URT-1 das uebernimmt.
+#define SERVO_UART_NUM 2
+#define SERVO_RX_PIN 16
+#define SERVO_TX_PIN 15
+#define SERVO_DIR_PIN 7
+#define SERVO_BAUDRATE 1000000
+#define SERVO_ID 1
 
-// TMC2209 Konfiguration ueber UART
-#define TMC_UART_NUM 2
-#define TMC_RX_PIN 16
-#define TMC_TX_PIN 15
-#define TMC_BAUDRATE 115200
-#define TMC_ADDRESS 0b00       // MS1/MS2 beide auf GND
-#define TMC_RSENSE 0.11f       // typisch fuer BigTreeTech/Fysetc TMC2209
-#define TMC_RMS_CURRENT_MA 600 // NEMA17 mit ~1.0 A Nennstrom, leise und kuehl
-#define TMC_MICROSTEPS 16
+// 12-Bit-Absolutencoder: 4096 Zaehlwerte auf 360 Grad = 0.0879 Grad.
+#define SERVO_COUNTS_PER_REV 4096
+// Fahrgeschwindigkeit in Zaehlwerten/s. 1000 entspricht rund 88 Grad/s;
+// die Leerlaufdrehzahl liegt bei etwa 3070 (270 Grad/s bei 12 V).
+#define SERVO_MOVE_SPEED 1000
+#define SERVO_RETURN_SPEED 2000
+// Beschleunigung in 100 Zaehlwerten/s^2.
+#define SERVO_ACCELERATION 50
+// Ankunft gilt ab dieser Abweichung als erreicht (3 Zaehlwerte = 0.26 Grad).
+#define SERVO_ARRIVE_TOLERANCE_COUNTS 3
+#define SERVO_POLL_INTERVAL_MS 5
+#define SERVO_MOVE_TIMEOUT_MS 4000
 
-// Mechanik: NEMA17 mit 200 Vollschritten, GT2 20T -> 60T ergibt 3:1.
-#define MOTOR_FULL_STEPS 200
-#define GEAR_RATIO 3.0
-
-// --- Sweep ----------------------------------------------------------------
+// --- Sweep: Schritt und Halt ---------------------------------------------
 // 180 Grad genuegen fuer die volle Kugel, weil der LiDAR in seiner Ebene
-// bereits 360 Grad misst. Damit entfaellt der Schleifring.
+// bereits 360 Grad misst. Der Bereich ist halboffen - bei 0 und bei 180 Grad
+// waere es dieselbe Ebene. Damit entfaellt auch der Schleifring.
 #define YAW_MIN_DEG 0.0
 #define YAW_MAX_DEG 180.0
-// 10 deg/s ergibt bei 10 Hz Scanrate 1 Grad zwischen zwei Scanebenen
-// und einen Sweep von 18 s.
-#define YAW_SWEEP_RATE_DEG_S 10.0
-#define YAW_RETURN_RATE_DEG_S 60.0
-#define YAW_HOMING_RATE_DEG_S 30.0
-// Sicherheitsgrenze: laenger darf keine Fahrt dauern.
-#define YAW_MOVE_TIMEOUT_MS 30000
+// Abstand zwischen zwei Scanebenen. 1 Grad ergibt 180 Ebenen a 3200 Punkte.
+#define YAW_PLANE_STEP_DEG 1.0
+
+// Wartezeit nach der Ankunft, bevor gemessen wird: Getriebe und Regelung
+// muessen zur Ruhe kommen.
+#define PLANE_SETTLE_MS 40
+// Notbremse, falls die Umlaufmarken des LiDAR ausbleiben. Eine Umdrehung
+// dauert bei 10 Hz 100 ms; im ungueltigen Fall wird bis zu einer Umdrehung
+// gewartet, bevor es weitergeht.
+#define PLANE_CAPTURE_TIMEOUT_MS 400
 
 // --- Einbaulage -----------------------------------------------------------
 // Abstand des optischen Zentrums von der Gierachse (radial) und seine Hoehe

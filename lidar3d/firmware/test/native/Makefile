@@ -7,7 +7,7 @@ FIXTURE ?= ../../../tests/wire_fixture.txt
 test: run_tests
 	./run_tests $(FIXTURE)
 
-run_tests: test_main.cpp ../../src/dense_capsule.h ../../src/stream_proto.h ../../src/yaw_model.h
+run_tests: test_main.cpp ../../src/dense_capsule.h ../../src/stream_proto.h ../../src/sweep_plan.h ../../src/angle_util.h ../../src/feetech_bus.h
 	$(CXX) $(CXXFLAGS) -o $@ test_main.cpp
 
 clean:

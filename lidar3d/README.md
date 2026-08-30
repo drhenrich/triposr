@@ -1,6 +1,6 @@
 # lidar3d — 3D-Scanner aus einem RPLIDAR S2
 
-Ein 2D-LiDAR wird von einem Schrittmotor um eine senkrechte Achse gedreht.
+Ein 2D-LiDAR wird von einem Servo um eine senkrechte Achse gedreht.
 Jede Messung ist damit eine Kugelkoordinate, und aus dem 2D-Scanner wird ein
 3D-Scanner. Der Aufbau steht still und scannt seine Umgebung — es wird kein
 ARCore und kein Kameratracking gebraucht.
@@ -29,36 +29,47 @@ Vier Konsequenzen, die den Entwurf bestimmen:
 2. **BLE scheidet aus.** Der Datenstrom zum Handy sind ~640 kbit/s. BLE schafft
    realistisch 100–200 kbit/s. Gestreamt wird deshalb über **TCP** — wahlweise
    über das USB-C-Kabel oder über WLAN (siehe unten).
-3. **190 g wollen eine Untersetzung.** Der Entwurf nutzt einen NEMA17 mit
-   GT2-Riemen 20T→60T (3:1). Das dämpft Vibrationen — der wichtigste
-   Störeinfluss auf die Distanzmessung während der Fahrt — und ergibt
-   0,0375° pro Microstep.
+3. **190 g brauchen ein Lager, nicht mehr Motor.** Die Gierachse ist ein
+   Feetech STS3215 (12 V, 30 kg·cm, 1:345). Sein Drehmoment ist reichlich; das
+   Kippmoment der 190 g nimmt ein Rillenkugellager auf, nicht die
+   Servo-Abtriebswelle.
 4. **Kein Schleifring nötig.** Der LiDAR misst in seiner Ebene bereits volle
    360°. Ein Gierbereich von **180° deckt deshalb die komplette Kugel ab**.
    Eine Kabelschlaufe genügt; das spart den Schleifring, der bei ~1 A
    Versorgungsstrom sonst der teuerste und unzuverlässigste Teil wäre.
 
-## Ein Sweep in Zahlen
+## Schritt und Halt statt Dauerfahrt
+
+Die Achse dreht **nicht** kontinuierlich. Sie fährt Ebene für Ebene an, rastet
+ein und lässt genau eine LiDAR-Umdrehung aufnehmen.
+
+Der Anlass war der Servo: 10°/s wären 3,7 % seiner Leerlaufdrehzahl, und so
+weit unten regelt ein 1:345-Getriebe schlecht. Der Gewinn geht aber weit
+darüber hinaus:
+
+* Der Gierwinkel wird am **Absolutencoder gemessen**, nicht aus der Zeit
+  hochgerechnet. Verlorene Schritte gibt es als Fehlerbild nicht mehr.
+* **Kein Endschalter, keine Referenzfahrt** — der Encoder ist absolut.
+* **Keine Zeitsynchronisation.** Bei Rotationsscannern mit Dauerfahrt ist die
+  Zuordnung von Messzeitpunkt zu Drehwinkel die Hauptfehlerquelle. Hier stellt
+  sich die Frage nicht.
+* Während der Messung steht die Achse still: keine Bewegungsunschärfe, keine
+  Getriebevibration im Sensor.
 
 ```
 $ python3 -m scan3d plan --span 180 --step 1
 Gierbereich          180.0 deg
 Ebenenabstand        1.000 deg
 Scanebenen           180
-Sweep-Dauer          18.0 s
-Gierrate             10.000 deg/s
+Sweep-Dauer          27.0 s
+Zeit je Ebene        150 ms
 Messungen je Ebene   3200
 Aufloesung in Ebene  0.1125 deg
 Punkte gesamt        576000
 ```
 
-18 Sekunden für 576.000 Punkte. Bei 0,5° Ebenenabstand sind es 36 s und
-1,15 Mio. Punkte.
-
-Nebenbei fällt hier ein beruhigendes Ergebnis ab: bei 10°/s entspricht **1 ms
-Latenz nur 0,01° Gierfehler**. Die Zeitsynchronisation zwischen LiDAR-Paket und
-Schrittzähler ist damit unkritisch — was bei diesem Aufbautyp sonst das größte
-Genauigkeitsproblem ist.
+27 Sekunden für 576.000 Punkte — der Preis gegenüber 18 s bei Dauerfahrt. Bei
+0,5° Ebenenabstand sind es 54 s und 1,15 Mio. Punkte.
 
 ## iPhone am USB-C
 
@@ -93,7 +104,7 @@ hoch, wenn alles andere steht), und ohne
 Verbindung — stillschweigend.
 
 Und: **das iPhone versorgt den Scanner nicht.** Der S2 will >2 W, der
-Schrittmotor 12 V. Das Kabel überträgt nur Daten, der Scanner hat sein eigenes
+Servo 12 V. Das Kabel überträgt nur Daten, der Scanner hat sein eigenes
 Netzteil.
 
 ## Aufbau des Repos
@@ -101,10 +112,13 @@ Netzteil.
 ```
 firmware/          ESP32-S3, PlatformIO
   src/dense_capsule.h   S2-Dekoder      (hardwarefrei, nativ getestet)
-  src/yaw_model.h       Gier-Festkomma  (hardwarefrei, nativ getestet)
+  src/angle_util.h      Winkelfestkomma (hardwarefrei, nativ getestet)
   src/stream_proto.h    Frame-Layout    (hardwarefrei, nativ getestet)
   src/rplidar_s2.*      UART-Anbindung
-  src/yaw_axis.*        TMC2209 + LEDC-Schrittimpulse
+  src/feetech_bus.h     STS3215-Busprotokoll (hardwarefrei, nativ getestet)
+  src/sweep_plan.h      Ebenenaufteilung     (hardwarefrei, nativ getestet)
+  src/feetech_servo.*   Servo am Halbduplex-Bus
+  src/yaw_axis.*        Schritt-und-Halt-Automat
   src/usb_ncm.*         USB-C als USB-Ethernet zum iPhone
   src/main.cpp          Tasks, Netz, TCP
   test/native/          Logiktests mit g++, ohne Hardware
@@ -113,7 +127,7 @@ ios/               iPhone-App mit Echtzeit-3D
   ScannerApp/       SwiftUI + Metal-Renderer
 host/              Python, nur Standardbibliothek im Kern
   scan3d/           Dekoder, Geometrie, PLY-Export, CLI
-  tests/            64 Tests
+  tests/            65 Tests
 tests/wire_fixture.txt  gemeinsame Byte-Fixture aller drei Protokollseiten
 docs/              Hardware, Geometrie/Kalibrierung, Protokolle, iOS/USB-C
 ```
@@ -147,14 +161,13 @@ cd ../host && python3 -m scan3d capture 192.168.7.1 --color -o scan.ply
 Für die Live-Ansicht auf dem iPhone siehe [`ios/README.md`](ios/README.md) —
 Xcode-Projekt in fünf Schritten, die Quellen liegen fertig da.
 
-Sobald sich ein Client verbindet, referenziert die Achse auf den Endschalter
-und fährt einen Sweep.
+Sobald sich ein Client verbindet, fährt die Achse einen Sweep.
 
 ## Tests
 
 ```bash
-cd host && python3 -m unittest discover -s tests -t .   # 64 Tests
-make -C firmware/test/native                            # 49 Prüfungen
+cd host && python3 -m unittest discover -s tests -t .   # 65 Tests
+make -C firmware/test/native                            # 125 Prüfungen
 cd ios/LidarKit && swift test                           # nur auf dem Mac
 ```
 
@@ -166,14 +179,15 @@ verbogen werden.
 ## Stand
 
 **Getestet und grün** ist alles, was ohne Hardware prüfbar ist: der
-Capsule-Dekoder, die Winkelinterpolation, die Gier-Festkommamathematik, die
-Geometrie und das Frameprotokoll (Python und C++, byteweise gegeneinander).
+Capsule-Dekoder, die Winkelinterpolation, das Feetech-Busprotokoll, die
+Ebenenaufteilung, die Encoderumrechnung, die Geometrie und das Frameprotokoll
+(Python und C++, byteweise gegeneinander).
 
 **Nicht kompiliert** — in dieser Umgebung fehlten die Toolchains:
 
 | Teil | warum ungeprüft |
 |---|---|
-| `firmware/src/rplidar_s2.cpp`, `yaw_axis.cpp`, `main.cpp` | keine PlatformIO-Toolchain |
+| `firmware/src/rplidar_s2.cpp`, `feetech_servo.cpp`, `yaw_axis.cpp`, `main.cpp` | keine PlatformIO-Toolchain |
 | `firmware/src/usb_ncm.cpp` und der IDF-Build (`env:usb`) | dito; zusätzlich hat sich die `esp_tinyusb`-API zwischen IDF-Versionen mehrfach geändert — vor dem Flashen gegen das Beispiel `tusb_ncm` der eigenen Version abgleichen |
 | `ios/` (alles) | kein Swift, kein Xcode |
 

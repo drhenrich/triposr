@@ -114,11 +114,17 @@ class TestSweepPlan(unittest.TestCase):
     def test_180_degrees_at_one_degree_steps(self):
         info = sweep_plan(180.0, 1.0)
         self.assertEqual(info["planes"], 180.0)
-        self.assertAlmostEqual(info["duration_s"], 18.0)
-        self.assertAlmostEqual(info["yaw_rate_deg_s"], 10.0)
+        # Je Ebene eine Umdrehung (100 ms) plus Fahrt und Einrasten (50 ms).
+        self.assertAlmostEqual(info["seconds_per_plane"], 0.15)
+        self.assertAlmostEqual(info["duration_s"], 27.0)
         self.assertAlmostEqual(info["samples_per_plane"], 3200.0)
         self.assertAlmostEqual(info["total_samples"], 576000.0)
         self.assertAlmostEqual(info["in_plane_resolution_deg"], 0.1125)
+
+    def test_overhead_is_configurable(self):
+        """Ohne Zuschlag bleibt die reine Messzeit uebrig."""
+        info = sweep_plan(180.0, 1.0, plane_overhead_s=0.0)
+        self.assertAlmostEqual(info["duration_s"], 18.0)
 
     def test_finer_step_takes_proportionally_longer(self):
         coarse = sweep_plan(180.0, 1.0)
