@@ -61,6 +61,16 @@
 #define MOUNT_OFFSET_AXIAL_UM 0
 
 // --- Netzwerk -------------------------------------------------------------
+// Beide Transporte koennen gleichzeitig laufen; der TCP-Server lauscht auf
+// allen Interfaces, und die App probiert Kabel zuerst, dann WLAN.
+//
+// USB-C: der ESP32-S3 meldet sich am iPhone als USB-Ethernet (CDC-NCM), weil
+// iOS generische USB-Serial-Geraete nicht an Apps durchreicht. Siehe
+// docs/04-ios-usb.md. Adresse des Scanners: 192.168.7.1
+#define ENABLE_USB_NCM 1
+// WLAN als Rueckfallweg. Kostet das iPhone seine Internetverbindung.
+#define ENABLE_WIFI 1
+
 // WIFI_AP_MODE 1: der Scanner spannt ein eigenes Netz auf (Handy verbindet
 // sich damit). 0: er haengt sich in ein vorhandenes WLAN.
 #define WIFI_AP_MODE 1

@@ -21,6 +21,7 @@
 #include "dense_capsule.h"
 #include "rplidar_s2.h"
 #include "stream_proto.h"
+#include "usb_ncm.h"
 #include "yaw_axis.h"
 
 using namespace nwl;
@@ -184,7 +185,9 @@ static void netTask(void *) {
 // --- Aufbau ---------------------------------------------------------------
 
 static void startWifi() {
-#if WIFI_AP_MODE
+#if !ENABLE_WIFI
+  Serial.println("WLAN deaktiviert");
+#elif WIFI_AP_MODE
   WiFi.mode(WIFI_AP);
   WiFi.softAP(WIFI_SSID, WIFI_PASSWORD);
   Serial.printf("AP %s, IP %s\n", WIFI_SSID, WiFi.softAPIP().toString().c_str());
@@ -235,7 +238,23 @@ void setup() {
   }
 
   startWifi();
+
+#if ENABLE_USB_NCM
+  // Interface anlegen, aber Link noch unten lassen: iOS fragt DHCP genau
+  // einmal beim Link-Up und wiederholt es nie. Erst wenn der TCP-Server
+  // lauscht, wird freigegeben.
+  bool ncmReady = usbNcmStart();
+  if (!ncmReady) Serial.println("WARNUNG: USB-NCM liess sich nicht starten");
+#endif
+
   g_server.begin();
+
+#if ENABLE_USB_NCM
+  if (ncmReady) {
+    usbNcmSetLinkUp(true);
+    Serial.println("USB-C bereit: Scanner unter 192.168.7.1:5005");
+  }
+#endif
 
   // LiDAR auf Core 1, Netz auf Core 0 (dort laeuft auch der WLAN-Stack).
   xTaskCreatePinnedToCore(lidarTask, "lidar", 4096, nullptr, 5, nullptr, 1);

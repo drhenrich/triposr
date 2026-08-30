@@ -5,6 +5,19 @@ firmware/.vscode/
 # Nativer Testbuild
 firmware/test/native/run_tests
 
+# ESP-IDF
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/build/
+
+# Xcode / SwiftPM
+ios/**/.build/
+ios/**/*.xcodeproj/
+ios/**/*.xcworkspace/
+ios/**/DerivedData/
+.DS_Store
+
 # Aufnahmen
 *.ply
 *.bin

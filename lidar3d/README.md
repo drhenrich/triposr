@@ -27,7 +27,8 @@ Vier Konsequenzen, die den Entwurf bestimmen:
    *dense-capsuled* Express-Modus benutzt werden: 40 Messungen in 84 Byte,
    also 2,1 Byte pro Messung bzw. ~67 kB/s. Das passt.
 2. **BLE scheidet aus.** Der Datenstrom zum Handy sind ~640 kbit/s. BLE schafft
-   realistisch 100–200 kbit/s. Die Firmware streamt daher über **WLAN/TCP**.
+   realistisch 100–200 kbit/s. Gestreamt wird deshalb über **TCP** — wahlweise
+   über das USB-C-Kabel oder über WLAN (siehe unten).
 3. **190 g wollen eine Untersetzung.** Der Entwurf nutzt einen NEMA17 mit
    GT2-Riemen 20T→60T (3:1). Das dämpft Vibrationen — der wichtigste
    Störeinfluss auf die Distanzmessung während der Fahrt — und ergibt
@@ -59,6 +60,42 @@ Latenz nur 0,01° Gierfehler**. Die Zeitsynchronisation zwischen LiDAR-Paket und
 Schrittzähler ist damit unkritisch — was bei diesem Aufbautyp sonst das größte
 Genauigkeitsproblem ist.
 
+## iPhone am USB-C
+
+Zielaufbau ist ein iPhone 17 Pro am Kabel, mit der Punktwolke live auf dem
+Display. Der entscheidende Punkt vorweg:
+
+**Ein serielles USB-Gerät kann eine iPhone-App nicht ansprechen.** iOS reicht
+generische USB-Peripherie nicht durch, `ExternalAccessory` verlangt
+MFi-Zertifizierung, und DriverKit gibt es auf macOS und iPadOS — aber nicht
+auf dem iPhone. Der USB-C-Anschluss ändert daran nichts.
+
+**Ein USB-*Netzwerk*gerät dagegen schon.** Seit iOS 17 unterstützen iPhones
+USB-Ethernet-Adapter über die Geräteklasse CDC-NCM, mit Bordmitteln und ohne
+MFi. Der ESP32-S3 meldet sich also als Netzwerkinterface an, vergibt dem
+iPhone per DHCP eine Adresse, und der TCP-Server ist darüber erreichbar.
+
+Der Gewinn: **am Protokoll ändert sich nichts.** Derselbe Stream, derselbe
+Decoder, dieselbe Ansicht — egal ob Kabel oder WLAN. Und das iPhone behält am
+Kabel sein eigenes WLAN und Mobilfunknetz, statt sich in das Netz des Scanners
+einbuchen zu müssen.
+
+| Weg | Scanner | iPhone |
+|---|---|---|
+| USB-C (NCM) | `192.168.7.1:5005` | `192.168.7.2` per DHCP |
+| WLAN (AP) | `192.168.4.1:5005` | `192.168.4.2` per DHCP |
+
+Zwei Fallstricke, die einen Abend kosten können, stehen ausführlich in
+[`docs/04-ios-usb.md`](docs/04-ios-usb.md): iOS fragt DHCP **genau einmal**
+beim Link-Up und wiederholt es nie (die Firmware zieht den Link deshalb erst
+hoch, wenn alles andere steht), und ohne
+`NSLocalNetworkUsageDescription` in der `Info.plist` blockiert iOS jede
+Verbindung — stillschweigend.
+
+Und: **das iPhone versorgt den Scanner nicht.** Der S2 will >2 W, der
+Schrittmotor 12 V. Das Kabel überträgt nur Daten, der Scanner hat sein eigenes
+Netzteil.
+
 ## Aufbau des Repos
 
 ```
@@ -68,13 +105,17 @@ firmware/          ESP32-S3, PlatformIO
   src/stream_proto.h    Frame-Layout    (hardwarefrei, nativ getestet)
   src/rplidar_s2.*      UART-Anbindung
   src/yaw_axis.*        TMC2209 + LEDC-Schrittimpulse
-  src/main.cpp          Tasks, WLAN, TCP
+  src/usb_ncm.*         USB-C als USB-Ethernet zum iPhone
+  src/main.cpp          Tasks, Netz, TCP
   test/native/          Logiktests mit g++, ohne Hardware
+ios/               iPhone-App mit Echtzeit-3D
+  LidarKit/         Swift Package: Protokoll, Geometrie, TCP (testbar)
+  ScannerApp/       SwiftUI + Metal-Renderer
 host/              Python, nur Standardbibliothek im Kern
   scan3d/           Dekoder, Geometrie, PLY-Export, CLI
   tests/            64 Tests
-tests/wire_fixture.txt  gemeinsame Byte-Fixture beider Protokollseiten
-docs/              Hardware, Geometrie/Kalibrierung, Protokolle
+tests/wire_fixture.txt  gemeinsame Byte-Fixture aller drei Protokollseiten
+docs/              Hardware, Geometrie/Kalibrierung, Protokolle, iOS/USB-C
 ```
 
 ## Loslegen
@@ -99,10 +140,12 @@ python3 -m scan3d serial /dev/ttyUSB0 --duration 20 --yaw-rate 10 -o scan.ply
 **Vollständiger Aufbau:**
 
 ```bash
-cd firmware && pio run -t upload
-# Handy oder PC mit dem WLAN "lidar3d" verbinden
-cd ../host && python3 -m scan3d capture 192.168.4.1 --color -o scan.ply
+cd firmware && pio run -e usb -t upload    # mit USB-C; -e wifi baut nur WLAN
+cd ../host && python3 -m scan3d capture 192.168.7.1 --color -o scan.ply
 ```
+
+Für die Live-Ansicht auf dem iPhone siehe [`ios/README.md`](ios/README.md) —
+Xcode-Projekt in fünf Schritten, die Quellen liegen fertig da.
 
 Sobald sich ein Client verbindet, referenziert die Achse auf den Endschalter
 und fährt einen Sweep.
@@ -112,32 +155,39 @@ und fährt einen Sweep.
 ```bash
 cd host && python3 -m unittest discover -s tests -t .   # 64 Tests
 make -C firmware/test/native                            # 49 Prüfungen
+cd ios/LidarKit && swift test                           # nur auf dem Mac
 ```
 
-Beide Seiten prüfen das Frame-Layout gegen dieselbe Datei
-`tests/wire_fixture.txt`. Ändert jemand nur eine Seite des Protokolls,
-schlägt genau ein Test fehl.
+Alle drei Implementierungen des Protokolls — Python, C++ und Swift — prüfen
+ihr Byte-Layout gegen dieselbe Datei `tests/wire_fixture.txt`. Ändert jemand
+nur eine Seite, schlägt genau ein Test fehl, statt dass Punktwolken still
+verbogen werden.
 
 ## Stand
 
-Getestet ist alles, was ohne die Hardware testbar ist: der Capsule-Dekoder,
-die Winkelinterpolation, die Gier-Festkommamathematik, die Geometrie und beide
-Seiten des Frameprotokolls.
+**Getestet und grün** ist alles, was ohne Hardware prüfbar ist: der
+Capsule-Dekoder, die Winkelinterpolation, die Gier-Festkommamathematik, die
+Geometrie und das Frameprotokoll (Python und C++, byteweise gegeneinander).
 
-**Nicht verifiziert** sind die Teile, die echte Hardware brauchen: die
-UART-Anbindung an den S2 (`rplidar_s2.cpp`), die TMC2209-Ansteuerung
-(`yaw_axis.cpp`) und `main.cpp`. Die sind geschrieben, aber weder kompiliert
-noch auf einem Gerät gelaufen — für PlatformIO fehlte in dieser Umgebung die
-Toolchain. Vor dem ersten Einschalten also `docs/01-hardware.md` lesen,
-besonders den Abschnitt zur Stromversorgung.
+**Nicht kompiliert** — in dieser Umgebung fehlten die Toolchains:
 
-Eine Android-App ist bewusst nicht dabei. `docs/03-protokolle.md`
-spezifiziert den Stream vollständig; der Python-Empfänger in
-`host/scan3d/stream.py` ist rund 200 Zeilen und lässt sich direkt nach Kotlin
-übertragen.
+| Teil | warum ungeprüft |
+|---|---|
+| `firmware/src/rplidar_s2.cpp`, `yaw_axis.cpp`, `main.cpp` | keine PlatformIO-Toolchain |
+| `firmware/src/usb_ncm.cpp` und der IDF-Build (`env:usb`) | dito; zusätzlich hat sich die `esp_tinyusb`-API zwischen IDF-Versionen mehrfach geändert — vor dem Flashen gegen das Beispiel `tusb_ncm` der eigenen Version abgleichen |
+| `ios/` (alles) | kein Swift, kein Xcode |
+
+Die Swift-Seite bringt aber eigene Tests mit: ein `swift test` auf dem Mac
+prüft den Decoder gegen dieselbe Byte-Fixture wie die anderen beiden
+Implementierungen — bevor Hardware im Spiel ist.
+
+Vor dem ersten Einschalten `docs/01-hardware.md` lesen, besonders den
+Abschnitt zur Stromversorgung.
 
 ## Weiter
 
 * `docs/01-hardware.md` — Stückliste, Mechanik, Verkabelung, Strombedarf
 * `docs/02-geometrie.md` — Mathematik, Abdeckung, Kalibrierung
 * `docs/03-protokolle.md` — S2-Protokoll und Streamformat
+* `docs/04-ios-usb.md` — iPhone am USB-C: was geht und was nicht
+* `ios/README.md` — App bauen und bedienen
