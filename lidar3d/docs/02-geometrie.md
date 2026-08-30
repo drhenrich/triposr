@@ -1,0 +1,166 @@
+# Geometrie, Abdeckung, Kalibrierung
+
+## Die Rechnung
+
+Steht die Scanebene senkrecht und enthält sie die Drehachse, dann ist eine
+Messung schlicht eine Kugelkoordinate:
+
+* `α` — Polarwinkel, kommt vom LiDAR (0° = entlang der Drehachse nach oben)
+* `ψ` — Azimut, kommt vom Schrittzähler
+* `r` — Distanz
+
+```
+x = r · sin α · cos ψ
+y = r · sin α · sin ψ
+z = r · cos α
+```
+
+Mehr ist es nicht. Kein SLAM, keine Registrierung, keine Pose-Schätzung — der
+Aufbau steht still, und beide Winkel sind direkt gemessen.
+
+Sitzt das optische Zentrum nicht exakt auf der Drehachse, gehen die beiden
+Versätze **vor** der Drehung ein:
+
+```
+u = d_radial + r · sin α        (radial von der Achse weg)
+w = d_axial  + r · cos α        (entlang der Achse)
+
+x = u · cos ψ
+y = u · sin ψ
+z = w
+```
+
+Implementiert in `host/scan3d/geometry.py:to_cartesian`.
+
+## Warum 180° Gieren genügen
+
+`u` darf negativ werden. Eine Messung mit α = 270° zeigt in dieselbe Richtung
+wie eine Messung mit α = 90° bei einem um 180° gedrehten Kopf. Formal:
+
+```
+(r, α = 270°, ψ = 0°)  ≡  (r, α = 90°, ψ = 180°)
+```
+
+Der Test `test_180_degree_yaw_covers_the_back_half` prüft genau diese
+Identität. Anders gesagt: **die hintere Hälfte der Scanebene erledigt bereits
+die zweite Hälfte des Gierbereichs.** Ein Sweep von 0° bis 180° tastet die
+volle Kugel ab; 360° zu fahren würde jeden Punkt nur ein zweites Mal messen.
+
+Praktische Folge: eine Kabelschlaufe statt eines Schleifrings.
+
+## Punktdichte
+
+Die Dichte ist stark ungleichmäßig — dicht an den Polen der Drehachse, dünn am
+Äquator. Der Winkelabstand zwischen benachbarten Scanebenen skaliert mit
+`sin α`:
+
+```
+Δ_quer(α) = r · sin α · Δψ
+```
+
+Bei 1° Ebenenabstand und 5 m Entfernung sind das am Äquator 87 mm zwischen den
+Ebenen, aber nur 0,1125° × 5 m = 10 mm *innerhalb* einer Ebene. Die Wolke ist
+also in einer Richtung fast neunmal feiner als in der anderen.
+
+Das ist die **Sanduhr- bzw. Fliegen-Form**, die in der Vorlage auf dem Display
+zu sehen ist: an den Polen sammeln sich alle Ebenen, dort steht ein dichter
+Kegel, dazwischen wird es dünn.
+
+Zwei Gegenmittel:
+
+* `--voxel 0.02` beim Export. Ein Punkt je 2-cm-Voxel vereinheitlicht die
+  Dichte und schrumpft die Datei erheblich.
+* Feinerer Ebenenabstand, wenn der Äquator wichtig ist — kostet linear Zeit
+  (`python3 -m scan3d plan --step 0.5`).
+
+## Zeitsynchronisation
+
+Jede Messung braucht den Gierwinkel zum Messzeitpunkt. Die Firmware macht das
+so:
+
+1. LEDC erzeugt eine **feste** STEP-Frequenz in Hardware. Die Achse läuft damit
+   exakt gleichförmig, und der Gierwinkel ist linear in der Zeit — es müssen
+   keine Schritte gezählt werden (`firmware/src/yaw_model.h`).
+2. Jede Dense-Capsule bekommt beim Empfang einen Zeitstempel. Der Parser
+   rechnet dabei die Byteposition heraus: bei 1 MBaud dauert ein Byte 10 µs,
+   also lässt sich für jede Capsule in einem Lesevorgang der Empfangszeitpunkt
+   auf wenige Mikrosekunden genau rekonstruieren.
+3. Aus dem Zeitstempel wird der Gierwinkel der ersten und der letzten Messung
+   der Capsule berechnet und mitgesendet; der Host interpoliert dazwischen.
+
+Wie genau muss das sein? Bei 10°/s Gierrate:
+
+| Zeitfehler | Gierfehler |
+|---|---|
+| 1 ms | 0,01° |
+| 10 ms | 0,1° |
+| 100 ms | 1,0° |
+
+Selbst 10 ms Jitter bleiben unter dem Ebenenabstand. **Die Zeitsynchronisation
+ist bei diesem Aufbau unkritisch** — was angenehm ist, weil sie bei
+Rotationsscannern sonst die Hauptfehlerquelle darstellt. Der konstante Anteil
+der Latenz (interne Verarbeitungszeit des LiDAR plus Übertragung) ist ein
+fester Versatz und verschwindet in `yaw_zero` der Kalibrierung.
+
+## Kalibrierung
+
+Fünf Parameter. Alle werden beim Export übergeben oder in `config.h`
+eingetragen.
+
+### 1. `alpha_zero` und `alpha_sign` — wo ist oben?
+
+Der Scanner in einen Raum mit ebenem Boden stellen. Ein Sweep, dann in
+CloudCompare den Boden anschauen. Ist er nicht waagerecht, stimmt `alpha_zero`
+nicht. Ist die Wolke gespiegelt (Decke unten), `--alpha-sign -1` setzen.
+
+Genauer geht es so: eine einzelne Scanebene aufnehmen (`--yaw-rate 0`) und den
+LiDAR-Winkel des tiefsten Punktes ablesen. Dieser Winkel minus 180° ist
+`alpha_zero`.
+
+### 2. `offset_radial` — der wichtigste Wert
+
+Ein falscher radialer Versatz **krümmt ebene Wände**. Das ist die auffälligste
+Verzerrung überhaupt und lohnt die Mühe.
+
+Verfahren:
+
+1. Scanner mit ~3 m Abstand vor eine glatte, ebene Wand stellen.
+2. Sweep aufnehmen und mit `--offset-radial 0` exportieren.
+3. In CloudCompare die Wand von oben betrachten. Wölbt sie sich zum Scanner
+   hin, ist der Versatz positiv; wölbt sie sich weg, negativ.
+4. Den Wert in 5-mm-Schritten variieren und neu exportieren, bis die Wand
+   gerade ist. Die Rohdaten müssen dafür nicht neu aufgenommen werden — der
+   Versatz geht erst beim Export ein.
+
+Der Startwert lässt sich messen: Abstand von der Drehachse zur Mitte der
+optischen Baugruppe des S2, meist einige Zentimeter.
+
+Der Test `test_uncalibrated_radial_offset_bends_a_flat_wall` zeigt die
+Größenordnung: 40 mm Versatz verschieben eine 3 m entfernte Wand um bis zu
+40 mm, und zwar richtungsabhängig — daher die Krümmung.
+
+### 3. `offset_axial` — die Höhe
+
+Reine Verschiebung entlang Z, verzerrt nichts. Nur nötig, wenn der Ursprung
+der Punktwolke einer physischen Referenz entsprechen soll (Stativkopf,
+Bodenplatte). Mit dem Messschieber abnehmen und eintragen.
+
+### 4. `yaw_zero` — die Nordrichtung
+
+Verzerrt ebenfalls nichts, dreht nur die ganze Wolke. Relevant, wenn mehrere
+Sweeps zusammenpassen sollen. Der Endschalter definiert diesen Nullpunkt
+mechanisch; Wiederholgenauigkeit ist wichtiger als der Absolutwert.
+
+### 5. Gierrate
+
+Zu prüfen, wenn die Wolke *entlang der Drehung* geschert wirkt: ein senkrechter
+Türrahmen erscheint dann schraubenförmig verdreht. Ursache ist fast immer eine
+falsch eingetragene Untersetzung oder Microstep-Zahl in `config.h`, nicht die
+Zeitmessung. Gegenprobe: zwei Sweeps hintereinander in entgegengesetzter
+Richtung — bei falscher Rate laufen sie in unterschiedliche Richtungen
+auseinander.
+
+## Reihenfolge
+
+`alpha_sign` → `alpha_zero` → `offset_radial` → Gierrate → `offset_axial` →
+`yaw_zero`. Die ersten drei bestimmen die Form, die letzten drei nur die Lage.

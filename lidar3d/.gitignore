@@ -1,0 +1,13 @@
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+
+# Nativer Testbuild
+firmware/test/native/run_tests
+
+# Aufnahmen
+*.ply
+*.bin
+
+__pycache__/
+*.pyc
