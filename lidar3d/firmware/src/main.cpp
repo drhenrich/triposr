@@ -221,8 +221,9 @@ void setup() {
                    "Halbduplex-Verdrahtung und 12-V-Versorgung pruefen.");
     while (true) delay(1000);
   }
-  Serial.printf("Gierachse: %u Ebenen a %.2f deg, Encoderaufloesung %.4f deg\n",
-                g_axis.planeCount(), YAW_PLANE_STEP_DEG,
+  Serial.printf("Gierachse: Servo-Modell %u, %u Ebenen a %.2f deg, "
+                "Encoderaufloesung %.4f deg\n",
+                g_axis.servoModel(), g_axis.planeCount(), YAW_PLANE_STEP_DEG,
                 360.0 / SERVO_COUNTS_PER_REV);
 
   if (!g_lidar.begin(static_cast<uart_port_t>(LIDAR_UART_NUM), LIDAR_RX_PIN,

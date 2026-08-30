@@ -6,7 +6,7 @@
 |---|---|
 | RPLIDAR S2 | 190 g, 77 × 77 × 38,85 mm, 5 V, >2 W, TTL-UART 3,3 V @ 1 MBaud |
 | ESP32-S3 DevKitC-1 | zwei Kerne, genug RAM für die Queue, 3,3-V-UART |
-| Feetech STS3215 Busservo | 12 V, 30 kg·cm, 1:345, 12-bit-Absolutencoder, TTL halbduplex |
+| Feetech STS3215 Busservo | Ausführung **12 V / 30 kg·cm / magnetische Kodierung** (C018), 1:345, 12-bit-Absolutencoder, TTL halbduplex, ab Werk ID 1 und 1 MBaud |
 | Bustreiber für den Servo | Feetech FE-URT-1 oder ein 74HC241 — oder der ESP32 schaltet die Richtung selbst, siehe unten |
 | Rillenkugellager 6808 o. ä. | großer Innendurchmesser, damit das Kabel mittig durchgeht |
 | Netzteil 12 V / ≥3 A | |
@@ -156,6 +156,10 @@ Regeln:
    nicht, bricht die Firmware mit einer Meldung ab, statt eine Wolke mit
    erfundenen Winkeln aufzunehmen. Prüfen: Bus-ID (Werk: 1), 1 MBaud,
    Halbduplex-Verdrahtung, 12 V.
+
+   Die Startmeldung nennt die ausgelesene **Servo-Modellnummer**. Kommt dort
+   eine 0 oder etwas Unerwartetes, hängt am Bus nicht das, was man denkt —
+   das ist der schnellste Test, ob die Verdrahtung stimmt.
 3. **Getriebespiel messen.** Servo auf eine Position fahren, von Hand leicht
    in beide Richtungen drücken und die zurückgemeldete Position ablesen. Die
    Differenz ist das Spiel; sie geht als Rauschen in den Gierwinkel ein.

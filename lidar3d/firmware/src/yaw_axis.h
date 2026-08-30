@@ -52,6 +52,8 @@ class YawAxis {
 
   bool servoOk() const { return servoOk_; }
   uint32_t servoTimeouts() const { return servo_.timeouts(); }
+  // 0, wenn die Abfrage fehlgeschlagen ist.
+  uint16_t servoModel() const { return servoModel_; }
 
  private:
   enum Phase : uint8_t {
@@ -71,6 +73,7 @@ class YawAxis {
   SweepPlan plan_;
   Phase phase_ = kIdle;
   bool servoOk_ = false;
+  uint16_t servoModel_ = 0;
 
   uint16_t planeIndex_ = 0;
   uint16_t sweepIndex_ = 0;

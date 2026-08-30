@@ -16,6 +16,10 @@ bool YawAxis::begin() {
                           SERVO_TX_PIN, SERVO_DIR_PIN, SERVO_BAUDRATE, SERVO_ID);
   if (!servoOk_) return false;
 
+  // Modellnummer nur zur Anzeige - sie belegt, dass wirklich das erwartete
+  // Servo am Bus haengt und nicht bloss irgendetwas antwortet.
+  servo_.readModel(servoModel_);
+
   // Lagemodus: 0..360 Grad absolut. Der Encoder ist absolut, also gibt es
   // weder Referenzfahrt noch Endschalter.
   if (!servo_.setMode(feetech::kModePosition)) servoOk_ = false;

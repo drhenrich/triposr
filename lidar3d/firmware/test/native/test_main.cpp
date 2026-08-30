@@ -377,10 +377,20 @@ static void testFeetechPacketLayout() {
   CHECK_EQ(n, 8u);
   CHECK(toHex(buf, n) == "ffff0104023802be");
 
+  // Modellnummer lesen: FF FF 01 04 02 03 02 F3
+  n = feetech::buildRead(buf, 1, feetech::kRegModelL, 2);
+  CHECK_EQ(n, 8u);
+  CHECK(toHex(buf, n) == "ffff0104020302f3");
+
   // Ping: FF FF 01 02 01 FB
   n = feetech::buildPing(buf, 1);
   CHECK_EQ(n, 6u);
   CHECK(toHex(buf, n) == "ffff010201fb");
+
+  // Eine andere Bus-ID aendert Adressbyte und Pruefsumme.
+  n = feetech::buildPing(buf, 5);
+  CHECK_EQ(buf[2], 5);
+  CHECK_EQ(buf[5], feetech::checksum(buf, 5));
 }
 
 static void testFeetechMovePacket() {

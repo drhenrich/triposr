@@ -20,6 +20,17 @@
 #define LIDAR_RPM 600
 
 // --- Gierachse: Feetech STS3215 Busservo ---------------------------------
+// Gemeint ist die Ausfuehrung "12 V, 30 kg.cm, magnetische Kodierung"
+// (C018, Untersetzung 1:345, Leerlauf 0.222 s/60 Grad = 270 Grad/s).
+//
+// Es gibt Geschwister mit 7.4 V und anderer Untersetzung (C001 1:345,
+// C044 1:191, C046 1:147). Bei denen bleibt SERVO_COUNTS_PER_REV gleich -
+// der Encoder sitzt auf der Abtriebswelle und zaehlt immer 4096 je Umdrehung -
+// aber SERVO_MOVE_SPEED und SERVO_RETURN_SPEED muessen angepasst werden,
+// weil die erreichbare Drehzahl sich aendert.
+//
+// Werkseinstellung ab Werk: ID 1, 1 MBaud. Beides unten so eingetragen.
+//
 // Halbduplex-TTL-Bus. Liegt SERVO_DIR_PIN >= 0, schaltet der ESP32 die
 // Richtung selbst (RS485-Halbduplexmodus, blendet das eigene Echo aus);
 // auf -1 setzen, wenn ein Adapterboard wie das FE-URT-1 das uebernimmt.

@@ -73,6 +73,15 @@ bool FeetechServo::ping() {
   return transact(request, n, response, 0, 50);
 }
 
+bool FeetechServo::readModel(uint16_t &model) {
+  uint8_t request[kMaxPacketSize];
+  size_t n = buildRead(request, id_, kRegModelL, 2);
+  StatusPacket response;
+  if (!transact(request, n, response, 2, 50)) return false;
+  model = get16(response.params);
+  return true;
+}
+
 bool FeetechServo::setMode(uint8_t mode) {
   uint8_t request[kMaxPacketSize];
   size_t n = buildWrite8(request, id_, kRegMode, mode);

@@ -22,6 +22,9 @@ class FeetechServo {
              uint8_t id);
 
   bool ping();
+  // Modellnummer aus dem EPROM. Antwortet hier etwas Unerwartetes, stimmt
+  // die Busverdrahtung nicht oder es haengt ein anderes Servo dran.
+  bool readModel(uint16_t &model);
   bool setMode(uint8_t mode);
   bool setTorque(bool enabled);
   bool setAngleLimits(uint16_t minCounts, uint16_t maxCounts);

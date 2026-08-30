@@ -167,7 +167,7 @@ Sobald sich ein Client verbindet, fährt die Achse einen Sweep.
 
 ```bash
 cd host && python3 -m unittest discover -s tests -t .   # 65 Tests
-make -C firmware/test/native                            # 125 Prüfungen
+make -C firmware/test/native                            # 129 Prüfungen
 cd ios/LidarKit && swift test                           # nur auf dem Mac
 ```
 
