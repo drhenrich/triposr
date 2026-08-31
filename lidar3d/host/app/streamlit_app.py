@@ -240,21 +240,82 @@ if "yaw_deg" not in st.session_state:
     st.session_state.yaw_deg = 0.0
 if "_pending_yaw" in st.session_state:
     st.session_state.yaw_deg = st.session_state.pop("_pending_yaw")
-
 with tab_3d:
+    cloud = st.session_state.cloud
+    planes = st.session_state.planes
+
+    # Die Ansicht steht bewusst oben und ueber die volle Breite: in einer
+    # Spalte rutscht sie bei schmalem Fenster unter die Eingabefelder und ist
+    # dann nicht mehr zu sehen.
+    figure3d = go.Figure()
+    if cloud:
+        limit = 60000
+        shown = cloud[:: max(1, len(cloud) // limit)]
+        figure3d.add_trace(go.Scatter3d(
+            x=[p[0] for p in shown], y=[p[1] for p in shown],
+            z=[p[2] for p in shown], mode="markers",
+            marker=dict(size=max(1, point_size - 1),
+                        color=[p[2] for p in shown],
+                        colorscale="Viridis", opacity=0.85),
+            hovertemplate="x %{x:.2f}  y %{y:.2f}  z %{z:.2f} m<extra></extra>",
+        ))
+    else:
+        shown = []
+        # Leere Szene mit einem Punkt im Ursprung, damit die Achsen und damit
+        # die Drehbarkeit sichtbar sind, bevor die erste Ebene da ist.
+        figure3d.add_trace(go.Scatter3d(
+            x=[0], y=[0], z=[0], mode="markers",
+            marker=dict(size=4, color="#888"),
+            hovertemplate="Sensor<extra></extra>"))
+
+    figure3d.update_layout(
+        height=620, margin=dict(l=0, r=0, t=0, b=0), showlegend=False,
+        scene=dict(aspectmode="data" if cloud else "cube",
+                   xaxis_title="x (m)", yaxis_title="y (m)", zaxis_title="z (m)",
+                   camera=dict(eye=dict(x=1.6, y=1.6, z=1.0))))
+    st.plotly_chart(figure3d, use_container_width=True)
+    st.caption("Ziehen dreht die Wolke, Scrollen zoomt, Rechtsklick-Ziehen "
+               "verschiebt.")
+
+    if not cloud:
+        st.info("Die Wolke ist leer. Achse auf einen Winkel stellen, den Winkel "
+                "unten eintragen und **Ebene aufnehmen** druecken.")
+    elif len(shown) < len(cloud):
+        st.caption(f"{len(shown)} von {len(cloud)} Punkten gezeichnet "
+                   "(Anzeige ausgeduennt, der Export enthaelt alles).")
+
+    # -- Fortschritt --------------------------------------------------------
+
+    info = st.columns(3)
+    info[0].metric("Punkte", f"{len(cloud)}")
+    info[1].metric("Ebenen", f"{len(planes)}")
+    covered = max((a for a, _ in planes), default=0.0)
+    info[2].metric("Abgedeckt", f"{covered:.0f}° von 180°")
+    if planes:
+        st.progress(min(1.0, covered / 180.0))
+        angles = [f"{a:g}°" for a, _ in planes]
+        st.caption(f"Aufgenommen bei: {', '.join(angles[:24])}"
+                   + (" …" if len(angles) > 24 else ""))
+
+    st.divider()
     st.markdown(
         "Ablauf wie bei der Firmware, nur von Hand: Achse auf einen Gierwinkel "
-        "stellen, Winkel hier eintragen, **Ebene aufnehmen**. "
-        "**180° genuegen für die volle Kugel**, weil der LiDAR in seiner Ebene "
+        "stellen, Winkel eintragen, **Ebene aufnehmen**, weiterdrehen. "
+        "**180° genuegen fuer die volle Kugel**, weil der LiDAR in seiner Ebene "
         "bereits 360° misst.")
 
-    left, right = st.columns([1, 2])
+    # -- Bedienung ----------------------------------------------------------
 
-    with left:
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
         yaw = st.number_input("Gierwinkel (Grad)", step=1.0,
                               min_value=-360.0, max_value=360.0, key="yaw_deg")
         yaw_step = st.number_input("Schrittweite (Grad)", value=5.0, step=1.0,
                                    min_value=0.1, max_value=45.0)
+        advance = st.checkbox("Winkel danach weiterzaehlen", value=True)
+
+    with c2:
         offset_radial = st.number_input(
             "Versatz radial (mm)", value=0.0, step=1.0,
             help="Abstand des optischen Zentrums von der Drehachse. Falsch "
@@ -265,14 +326,32 @@ with tab_3d:
         alpha_sign = 1 if st.radio("Drehsinn alpha", ["normal", "gespiegelt"],
                                    horizontal=True) == "normal" else -1
 
+    with c3:
         capture = st.button("Ebene aufnehmen", type="primary",
                             use_container_width=True, disabled=not revolution)
-        advance = st.checkbox("Winkel danach weiterzaehlen", value=True)
+        if not revolution:
+            st.caption("Wartet auf Messdaten.")
         if st.button("Wolke leeren", use_container_width=True):
             st.session_state.cloud = []
             st.session_state.planes = []
             st.session_state.rows = []
             st.rerun()
+
+        if cloud:
+            st.download_button(
+                "PLY herunterladen", ply.dumps_ply(cloud, ply.height_colors(cloud)),
+                file_name="scan.ply", mime="application/octet-stream",
+                use_container_width=True)
+
+            csv_buffer = io.StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow(["Quality", "Angle (degrees)", "Distance (mm)", "Rotation"])
+            writer.writerows(st.session_state.rows)
+            st.download_button(
+                "CSV herunterladen", csv_buffer.getvalue(),
+                file_name="scanData.csv", mime="text/csv", use_container_width=True,
+                help="Gleiche Spalten wie das Instructables-Skript, damit "
+                     "convertAdjust.py die Datei direkt lesen kann.")
 
     if capture and revolution:
         mount = MountGeometry(offset_radial_mm=offset_radial,
@@ -294,56 +373,6 @@ with tab_3d:
             st.session_state._pending_yaw = min(360.0, yaw + yaw_step)
         st.rerun()
 
-    with right:
-        cloud = st.session_state.cloud
-        st.metric("Punkte in der Wolke", f"{len(cloud)}")
-        if st.session_state.planes:
-            angles = [f"{a:g}°" for a, _ in st.session_state.planes]
-            st.caption(f"{len(angles)} Ebenen: {', '.join(angles[:20])}"
-                       + (" …" if len(angles) > 20 else ""))
-
-        if cloud:
-            # Im Browser nicht mehr als noetig zeichnen.
-            limit = 60000
-            shown = cloud[::max(1, len(cloud) // limit)]
-            figure3d = go.Figure(go.Scatter3d(
-                x=[p[0] for p in shown], y=[p[1] for p in shown],
-                z=[p[2] for p in shown], mode="markers",
-                marker=dict(size=max(1, point_size - 1),
-                            color=[p[2] for p in shown],
-                            colorscale="Viridis", opacity=0.85),
-            ))
-            figure3d.update_layout(
-                height=560, margin=dict(l=0, r=0, t=0, b=0),
-                scene=dict(aspectmode="data",
-                           xaxis_title="x (m)", yaxis_title="y (m)",
-                           zaxis_title="z (m)"))
-            st.plotly_chart(figure3d, use_container_width=True)
-            if len(shown) < len(cloud):
-                st.caption(f"{len(shown)} von {len(cloud)} Punkten gezeichnet "
-                           "(Anzeige ausgeduennt, der Export enthaelt alles).")
-
-            ply_bytes = ply.dumps_ply(cloud, ply.height_colors(cloud))
-
-            dl1, dl2 = st.columns(2)
-            dl1.download_button("PLY herunterladen", ply_bytes,
-                                file_name="scan.ply", mime="application/octet-stream",
-                                use_container_width=True)
-
-            csv_buffer = io.StringIO()
-            writer = csv.writer(csv_buffer)
-            writer.writerow(["Quality", "Angle (degrees)", "Distance (mm)", "Rotation"])
-            writer.writerows(st.session_state.rows)
-            dl2.download_button(
-                "CSV herunterladen", csv_buffer.getvalue(),
-                file_name="scanData.csv", mime="text/csv", use_container_width=True,
-                help="Gleiche Spalten wie das Instructables-Skript, damit "
-                     "convertAdjust.py die Datei direkt lesen kann.")
-        else:
-            st.info("Noch keine Ebene aufgenommen.")
-
-
-# ---------------------------------------------------------------------------
 # Diagnose
 # ---------------------------------------------------------------------------
 

@@ -72,6 +72,7 @@ class FakeStreamlit:
         self.overrides: Dict[str, Any] = {}
         self.rerun_count = 0
         self.charts = 0
+        self.figures: List[Any] = []
         self.sidebar = self  # dieselbe Oberflaeche, das genuegt hier
 
     def begin_run(self) -> None:
@@ -84,6 +85,7 @@ class FakeStreamlit:
         self.errors.clear()
         self.warnings.clear()
         self.charts = 0
+        self.figures.clear()
 
     # -- Zustand der Widgets ----------------------------------------------
 
@@ -112,6 +114,7 @@ class FakeStreamlit:
     def json(self, *a, **kw): pass
     def metric(self, *a, **kw): pass
     def info(self, *a, **kw): pass
+    def progress(self, *a, **kw): pass
 
     def warning(self, msg="", *a, **kw): self.warnings.append(str(msg))
     def error(self, msg="", *a, **kw): self.errors.append(str(msg))
@@ -123,7 +126,9 @@ class FakeStreamlit:
     def tabs(self, labels, **kw):
         return [self] * len(labels)
 
-    def plotly_chart(self, *a, **kw): self.charts += 1
+    def plotly_chart(self, figure=None, *a, **kw):
+        self.charts += 1
+        self.figures.append(figure)
 
     def __enter__(self): return self
     def __exit__(self, *exc): return False
@@ -193,18 +198,33 @@ class FakeStreamlit:
         return decorate if func is None else decorate(func)
 
 
+class _Trace:
+    kind = "trace"
+
+    def __init__(self, *a, **kw):
+        self.kw = kw
+
+
 class FakeGraphObjects:
     """So viel plotly, wie die App anfasst."""
 
     class Figure:
-        def __init__(self, *a, **kw): self.traces = []
-        def add_trace(self, trace, **kw): self.traces.append(trace); return self
+        def __init__(self, trace=None, *a, **kw):
+            self.traces = [trace] if trace is not None else []
+            self.layout = {}
+
+        def add_trace(self, trace, **kw):
+            self.traces.append(trace)
+            return self
+
         def add_shape(self, **kw): return self
-        def update_layout(self, **kw): return self
 
-    class _Trace:
-        def __init__(self, *a, **kw): self.kw = kw
+        def update_layout(self, **kw):
+            self.layout.update(kw)
+            return self
 
-    Scattergl = _Trace
-    Scatter3d = _Trace
-    Histogram = _Trace
+        def kinds(self): return [t.kind for t in self.traces]
+
+    class Scattergl(_Trace): kind = "scattergl"
+    class Scatter3d(_Trace): kind = "scatter3d"
+    class Histogram(_Trace): kind = "histogram"

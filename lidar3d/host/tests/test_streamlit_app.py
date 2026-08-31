@@ -91,6 +91,37 @@ class TestAppRuns(unittest.TestCase):
             self.assertLessEqual(abs(x), 3.1)
             self.assertLessEqual(abs(z), 1.4)
 
+    def _trace_kinds(self):
+        return [kind for fig in self.st.figures for kind in fig.kinds()]
+
+    def test_3d_view_exists_even_before_the_first_plane(self):
+        """Die drehbare Ansicht muss von Anfang an da sein, sonst wirkt sie
+        schlicht verschwunden."""
+        run_app(self.st)
+        self.assertEqual(self.st.session_state["cloud"], [])
+        self.assertIn("scatter3d", self._trace_kinds())
+
+    def test_3d_view_shows_the_cloud_after_capturing(self):
+        self.st.button_returns["Ebene aufnehmen"] = True
+        run_app(self.st)                                  # nimmt auf, rerun
+        self.st.button_returns["Ebene aufnehmen"] = False
+        run_app(self.st)                                  # zeichnet
+
+        figures3d = [f for f in self.st.figures if "scatter3d" in f.kinds()]
+        self.assertEqual(len(figures3d), 1, "genau eine 3D-Ansicht erwartet")
+        trace = figures3d[0].traces[0]
+        self.assertGreater(len(trace.kw["x"]), 400)
+        # Gleiche Achsenmasstaebe, sonst ist der Raum verzerrt.
+        self.assertEqual(figures3d[0].layout["scene"]["aspectmode"], "data")
+
+    def test_every_chart_is_drawn_exactly_once(self):
+        """Gegenprobe zur Frage, ob etwas doppelt erscheint."""
+        run_app(self.st)
+        kinds = self._trace_kinds()
+        self.assertEqual(kinds.count("scattergl"), 1, "Live-2D genau einmal")
+        self.assertEqual(kinds.count("scatter3d"), 1, "3D genau einmal")
+        self.assertEqual(kinds.count("histogram"), 2, "zwei Diagnose-Histogramme")
+
     def test_capture_twice_accumulates(self):
         self.st.button_returns["Ebene aufnehmen"] = True
         run_app(self.st)
