@@ -1,0 +1,6 @@
+# Der Kern (Dekoder, Geometrie, PLY-Export, TCP-Empfang) braucht nichts
+# ausser der Standardbibliothek - Absicht, damit er ueberall laeuft und
+# ohne Installation testbar ist.
+#
+# Optional:
+pyserial>=3.5   ; nur fuer "scan3d serial" (S2 direkt am USB-Adapter)

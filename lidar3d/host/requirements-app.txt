@@ -1,0 +1,6 @@
+# Abhaengigkeiten der Streamlit-Oberflaeche (app/streamlit_app.py).
+# Der Kern in scan3d/ braucht davon nichts - nur die Oberflaeche.
+
+streamlit>=1.32      # st.toggle, st.tabs, st.rerun
+plotly>=5.18         # Scattergl fuer 2D, Scatter3d fuer die Wolke
+pyserial>=3.5        # nur noetig, wenn "Simulierter Raum" ausgeschaltet ist

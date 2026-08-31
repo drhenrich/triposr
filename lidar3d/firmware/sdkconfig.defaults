@@ -1,0 +1,27 @@
+# ESP-IDF-Einstellungen fuer die Umgebung `usb` (Arduino als IDF-Komponente).
+#
+# UNGEPRUEFT: diese Datei ist nach der IDF-Dokumentation und dem Beispiel
+# `examples/peripherals/usb/device/tusb_ncm` geschrieben, aber hier nie
+# gebaut worden. Bei Fehlern zuerst gegen die eigene IDF-Version abgleichen.
+
+# --- TinyUSB im NCM-Modus (USB-Ethernet zum iPhone) ---
+CONFIG_TINYUSB_NET_MODE_NCM=y
+CONFIG_TINYUSB_NET_MODE_NONE=n
+CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="lidar3d"
+CONFIG_TINYUSB_DESC_PRODUCT_STRING="LiDAR Scanner"
+
+# Die native USB-Schnittstelle gehoert TinyUSB, nicht der seriellen Konsole.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=n
+
+# --- lwIP ---
+# Der DHCP-Server vergibt genau eine Adresse (das iPhone).
+CONFIG_LWIP_DHCPS=y
+# Genug Puffer fuer ~83 kB/s Nutzlast plus Spitzen.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+
+# --- Arduino als Komponente ---
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_AUTOSTART_ARDUINO=y

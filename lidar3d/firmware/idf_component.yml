@@ -1,0 +1,7 @@
+## Verwaltete IDF-Komponenten fuer die Umgebung `usb`.
+## esp_tinyusb liefert den NCM-Modus (USB-Ethernet), den der Arduino-Core
+## allein nicht herausfuehrt.
+dependencies:
+  espressif/esp_tinyusb: "^1.4.0"
+  idf:
+    version: ">=5.1"

@@ -1,0 +1,16 @@
+# Gemeinsame Byte-Fixture fuer Firmware (C++), Host (Python) und iOS (Swift).
+# Aendert sich das Protokoll, muessen alle drei Seiten neu passen.
+#
+# scan: acht Messungen aus dem einfachen Scanmodus des C1, Gierwinkel 42.0 bis
+# 42.5 Grad, Flags newRevolution + sweepActive. Die Winkel sind absichtlich
+# ungleichmaessig verteilt - genau so liefert der C1 sie, und genau deshalb
+# traegt jede Messung ihren eigenen Winkel statt eines interpolierten Rasters.
+#
+# fault: der Hochlauf ist gescheitert, hier am Servo. Der Scanner bleibt
+# trotzdem im Netz erreichbar und schickt diesen Frame nach dem HELLO - sonst
+# saehe er von aussen aus wie ein Geraet ohne Firmware.
+fault 574e04000900530001515354533332313520616e74776f72746574206e696368742e204275732d49442c204261756472617465202831204d62617564292c2048616c626475706c657820756e642031322056207072756566656e2e
+scan 574e030304002c0000002a0000802a00080000000000e8032e00ed036100f2038c00f703bd00fc03ec0001041901060449010b04
+capsule 574e01033412600000802a0033832a00cd1c0000d01e0000e803ef03f603fd0304040b0412041904200427042e0435043c0443044a04510458045f0466046d0474047b0482048904900497049e04a504ac04b304ba04c104c804cf04d604dd04e404eb04f204f904
+hello 574e00000100140001005802cc61ffffe02e0000000000000000b400
+status 574e0200020014000300020000805a0040e201000700000002000000
