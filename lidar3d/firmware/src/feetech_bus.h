@@ -152,6 +152,66 @@ inline size_t buildMove(uint8_t *out, uint8_t id, uint16_t position,
   return buildWrite(out, id, kRegAcc, data, sizeof(data));
 }
 
+// --- Das eigene Echo wegwerfen --------------------------------------------
+
+// Der Bus ist halbduplex auf einer Leitung. Wer einen Transceiver mit
+// Richtungsumschaltung hat, bekommt sein Echo vom UART-Treiber ausgeblendet.
+// Bei der einfachen Verdrahtung mit einem Widerstand kommt das Gesendete
+// dagegen als Erstes zurueck - und das ist gefaehrlich, weil ein Kommando
+// genauso gerahmt ist wie eine Antwort: FF FF, ID, Laenge, ein Byte,
+// Parameter, Pruefsumme. Der StatusParser haelt es fuer ein gueltiges Paket.
+//
+// Erkennbar ist das Echo nur an einem: es gleicht Byte fuer Byte dem
+// Gesendeten. Weicht eines ab, war es doch die Antwort, und die
+// zurueckgehaltenen Bytes muessen nachgereicht werden - sonst geht der Anfang
+// der Antwort verloren, die ja auch mit FF FF beginnt.
+class EchoFilter {
+ public:
+  EchoFilter() { reset(nullptr, 0); }
+
+  void reset(const uint8_t *request, size_t length) {
+    request_ = request;
+    length_ = (request == nullptr) ? 0 : length;
+    matched_ = 0;
+    checking_ = length_ > 0;
+  }
+
+  // Ein empfangenes Byte einwerfen. Schreibt nach `out` die Bytes, die an den
+  // Parser weitergehen sollen, und gibt deren Anzahl zurueck - 0, solange es
+  // noch nach dem eigenen Echo aussieht.
+  //
+  // `out` muss kMaxPacketSize + 1 Bytes fassen.
+  size_t push(uint8_t byte, uint8_t *out) {
+    if (!checking_) {
+      out[0] = byte;
+      return 1;
+    }
+    if (byte == request_[matched_]) {
+      held_[matched_++] = byte;
+      if (matched_ == length_) {
+        checking_ = false;  // vollstaendiges Echo, verworfen
+        matched_ = 0;
+      }
+      return 0;
+    }
+    // Doch keine Wiederholung des Kommandos: alles Zurueckgehaltene
+    // nachreichen, dann dieses Byte.
+    checking_ = false;
+    size_t n = 0;
+    for (size_t i = 0; i < matched_; ++i) out[n++] = held_[i];
+    out[n++] = byte;
+    matched_ = 0;
+    return n;
+  }
+
+ private:
+  const uint8_t *request_;
+  size_t length_;
+  size_t matched_;
+  bool checking_;
+  uint8_t held_[kMaxPacketSize];
+};
+
 // --- Antworten lesen ------------------------------------------------------
 
 struct StatusPacket {

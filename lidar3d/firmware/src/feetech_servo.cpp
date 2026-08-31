@@ -53,16 +53,26 @@ bool FeetechServo::transact(const uint8_t *request, size_t length,
   if (!writeOnly(request, length)) return false;
   uart_wait_tx_done(port_, pdMS_TO_TICKS(20));
 
+  // Das eigene Echo zuerst wegwerfen - Begruendung in feetech_bus.h.
+  EchoFilter echo;
+  echo.reset(request, length);
+  uint8_t forward[kMaxPacketSize + 1];
+
   int64_t deadline = esp_timer_get_time() + static_cast<int64_t>(timeoutMs) * 1000;
   while (esp_timer_get_time() < deadline) {
     uint8_t byte;
     int got = uart_read_bytes(port_, &byte, 1, pdMS_TO_TICKS(2));
     if (got != 1) continue;
-    if (!parser_.push(byte, response)) continue;
-    // Am Bus koennen mehrere Servos haengen; nur die eigene ID zaehlt.
-    if (response.id != id_) continue;
-    if (response.paramCount < expectParams) continue;
-    return true;
+
+    size_t n = echo.push(byte, forward);
+    for (size_t i = 0; i < n; ++i) {
+      if (!parser_.push(forward[i], response)) continue;
+      // Am Bus koennen mehrere Servos haengen; nur die eigene ID zaehlt.
+      if (response.id != id_) continue;
+      if (response.paramCount < expectParams) continue;
+      return true;
+    }
+    continue;
   }
   ++timeouts_;
   return false;

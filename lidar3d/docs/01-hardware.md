@@ -113,29 +113,71 @@ Der C1 kann nichts anderes.
 
 ### STS3215 ↔ ESP32-S3
 
-Der Servo hat einen **halbduplexen** Ein-Draht-Bus: Senden und Empfangen
-teilen sich dieselbe Leitung. Zwei Wege, das anzuschließen:
+Der Servo hat drei Anschlüsse: **GND**, **12 V** und **eine einzige
+Signalleitung**. Der Bus ist *halbduplex* — Senden und Empfangen teilen sich
+diesen einen Draht. Genau daran hängt die ganze Verdrahtungsfrage.
 
-**a) Der ESP32 schaltet selbst** (`SERVO_DIR_PIN 7` in `config.h`). Die
-Firmware setzt die UART in den RS485-Halbduplexmodus; der Pin steuert dann
-einen Transceiver, und der Empfang ist während des Sendens abgeschaltet — das
-eigene Echo landet gar nicht erst im Puffer.
-
-**b) Ein Adapterboard übernimmt es** (Feetech FE-URT-1 o. ä.). Dann
-`SERVO_DIR_PIN` auf `-1` setzen.
-
-| Signal | ESP32-S3 |
-|---|---|
-| Servo-Bus TX | GPIO 15 |
-| Servo-Bus RX | GPIO 16 |
-| Richtungsumschaltung (DE/RE) | GPIO 7, oder −1 bei externem Adapter |
-| Servo-Versorgung | 12 V, gemeinsame Masse |
+| Signal | wohin | Anmerkung |
+|---|---|---|
+| GND | GND des ESP32 | **gemeinsame Masse ist Pflicht**, sonst geht gar nichts |
+| 12 V | eigenes Netzteil | nicht vom ESP32, nicht vom 5-V-Zweig des LiDAR |
+| Signal | siehe unten | eine Leitung für beide Richtungen |
 
 Bus-Baudrate 1 MBaud, Servo-ID 1 (Werkseinstellung).
 
-Beides ist in `config.h` einstellbar. **Register unter Adresse 40 nicht
-blind beschreiben** — dort liegen ID (5) und Baudrate (6) im EPROM, ein
-Fehlgriff macht den Servo unerreichbar. Die Firmware fasst sie nicht an.
+#### Die Signalleitung: zwei Wege
+
+**a) Mit Adapter oder Transceiver** — `SERVO_DIR_PIN 7` in `config.h`.
+
+Der Feetech **FE-URT-1** oder ein Transceiver mit DE/RE-Eingang. Die Firmware
+setzt die UART in den RS485-Halbduplexmodus; der ESP32 schaltet die Richtung
+selbst, und das eigene Echo landet gar nicht erst im Puffer.
+
+```
+ESP32 GPIO 15 (TX) ──► DI
+ESP32 GPIO 16 (RX) ◄── RO      Transceiver ──► Signalleitung des Servos
+ESP32 GPIO  7      ──► DE/RE
+```
+
+Nutzt du ein Adapterboard, das die Richtung selbst umschaltet,
+`SERVO_DIR_PIN` auf `-1` setzen.
+
+**b) Ohne alles — nur ein Widerstand.**
+
+Geht auch, und für den Anfang reicht es:
+
+```
+ESP32 GPIO 15 (TX) ──[ 1 kΩ ]──┬── Signalleitung des Servos
+ESP32 GPIO 16 (RX) ────────────┘
+```
+
+Der Widerstand begrenzt den Strom, wenn ESP32 und Servo gleichzeitig treiben.
+Dabei hört der ESP32 **sein eigenes Gesendetes** wieder mit. Das ist kein
+Schönheitsfehler: ein Kommando ist genauso gerahmt wie eine Antwort — `FF FF`,
+ID, Länge, ein Byte, Parameter, Prüfsumme. Der Parser hält es für ein gültiges
+Paket mit der richtigen ID.
+
+Die Firmware wirft das Echo deshalb weg, bevor sie parst (`EchoFilter` in
+`feetech_bus.h`): erkannt wird es daran, dass es Byte für Byte dem Gesendeten
+gleicht. Ohne diesen Filter meldete `ping()` Erfolg an einem Bus *ohne* Servo,
+und `readModel()` lieferte die Registeradresse aus dem eigenen Kommando statt
+der Modellnummer.
+
+Für `SERVO_DIR_PIN` gilt dann `-1`.
+
+#### Bevor du einschaltest
+
+* **Stromversorgung getrennt halten.** Der Servo zieht beim Anfahren
+  kurzzeitig ein Vielfaches seines Nennstroms. Hängt er am selben Zweig wie
+  der LiDAR, holst du dir denselben Brownout zurück, den du gerade
+  losgeworden bist. Eigenes 12-V-Netzteil, Masse gemeinsam.
+* **GPIO 17 ist belegt** — dort liegt der LiDAR-TX. Der Servo gehört auf
+  15/16. Viele Beispielsketche legen ihn auf 16/17; das kollidiert.
+* **Register unter Adresse 5 und 6 nicht blind beschreiben** — dort liegen
+  ID und Baudrate im EPROM, ein Fehlgriff macht den Servo unerreichbar. Die
+  Firmware fasst sie nicht an.
+
+
 
 ## Stromversorgung
 

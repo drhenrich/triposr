@@ -560,6 +560,87 @@ static void testWireFormat(const char *fixturePath) {
 
 // --- Geometrie auf dem Geraet --------------------------------------------
 
+// --- Halbduplex: das eigene Echo ------------------------------------------
+//
+// Ohne Transceiver kommt das Gesendete als Erstes zurueck. Ein Kommando ist
+// aber genauso gerahmt wie eine Antwort - der StatusParser haelt es fuer ein
+// gueltiges Paket mit passender ID und passender Parameterzahl. Genau daran
+// meldete ping() Erfolg, obwohl kein Servo antwortete.
+
+// Alle Bytes durch Filter und Parser schicken; zurueck kommt die Anzahl
+// erkannter Pakete und das letzte davon.
+static int runBus(const uint8_t *request, size_t reqLen,
+                  const std::vector<uint8_t> &stream,
+                  feetech::StatusPacket &last) {
+  feetech::EchoFilter echo;
+  echo.reset(request, reqLen);
+  feetech::StatusParser parser;
+  uint8_t forward[feetech::kMaxPacketSize + 1];
+  int packets = 0;
+  for (uint8_t b : stream) {
+    size_t n = echo.push(b, forward);
+    for (size_t i = 0; i < n; ++i) {
+      if (parser.push(forward[i], last)) ++packets;
+    }
+  }
+  return packets;
+}
+
+static void testEchoAloneIsNotAnAnswer() {
+  CASE("Feetech: das eigene Echo gilt nicht als Antwort");
+  uint8_t request[feetech::kMaxPacketSize];
+  size_t reqLen = feetech::buildPing(request, 1);
+
+  // Nur das Echo, kein Servo dahinter. Vorher kam hier ein Paket durch, und
+  // ping() meldete Erfolg an einem Bus ohne Servo.
+  feetech::StatusPacket last;
+  std::vector<uint8_t> onlyEcho(request, request + reqLen);
+  CHECK_EQ(runBus(request, reqLen, onlyEcho, last), 0);
+}
+
+static void testEchoIsSkippedAndTheAnswerArrives() {
+  CASE("Feetech: Echo wird verworfen, die Antwort kommt an");
+  uint8_t request[feetech::kMaxPacketSize];
+  size_t reqLen = feetech::buildRead(request, 1, feetech::kRegModelL, 2);
+  auto answer = buildStatus(1, 0, {0x09, 0x03});
+
+  std::vector<uint8_t> stream(request, request + reqLen);
+  stream.insert(stream.end(), answer.begin(), answer.end());
+
+  feetech::StatusPacket last;
+  CHECK_EQ(runBus(request, reqLen, stream, last), 1);
+  CHECK_EQ(feetech::get16(last.params), 0x0309);
+}
+
+static void testWithoutEchoNothingIsSwallowed() {
+  CASE("Feetech: mit Transceiver geht der Antwortanfang nicht verloren");
+  // Antwort und Kommando beginnen beide mit FF FF. Der Filter darf die
+  // gemeinsamen Bytes nicht behalten, wenn gar kein Echo kommt.
+  uint8_t request[feetech::kMaxPacketSize];
+  size_t reqLen = feetech::buildRead(request, 1, feetech::kRegModelL, 2);
+  auto answer = buildStatus(1, 0, {0x09, 0x03});
+
+  feetech::StatusPacket last;
+  CHECK_EQ(runBus(request, reqLen, std::vector<uint8_t>(answer.begin(),
+                                                       answer.end()), last), 1);
+  CHECK_EQ(feetech::get16(last.params), 0x0309);
+}
+
+static void testEchoFilterSurvivesAPartialMatch() {
+  CASE("Feetech: teilweise gleicher Anfang wird nachgereicht");
+  uint8_t request[feetech::kMaxPacketSize];
+  size_t reqLen = feetech::buildPing(request, 1);
+
+  // Etwas, das die ersten drei Bytes des Kommandos teilt und dann abweicht -
+  // die Antwort eines anderen Servos etwa. Nichts davon darf verschwinden.
+  auto answer = buildStatus(1, 0, {0x42});
+  feetech::StatusPacket last;
+  std::vector<uint8_t> stream(answer.begin(), answer.end());
+  CHECK_EQ(runBus(request, reqLen, stream, last), 1);
+  CHECK_EQ(last.paramCount, 1);
+  CHECK_EQ(last.params[0], 0x42);
+}
+
 static void testGeometryMatchesTheHost() {
   CASE("Geometrie: dieselben Zahlen wie host/scan3d/geometry.py");
   // Erzeugt mit to_cartesian() aus dem Pythonpaket. Laufen die beiden
@@ -809,6 +890,10 @@ int main(int argc, char **argv) {
   testStandardScanResync();
   testStandardScanSplitFeeds();
   testStandardScanRoundsQuarterMillimetres();
+  testEchoAloneIsNotAnAnswer();
+  testEchoIsSkippedAndTheAnswerArrives();
+  testWithoutEchoNothingIsSwallowed();
+  testEchoFilterSurvivesAPartialMatch();
   testGeometryMatchesTheHost();
   testGeometryHalfTurnCoversTheSphere();
   testRangeFilterMatchesTheC1();
