@@ -105,7 +105,7 @@ hoch, wenn alles andere steht), und ohne
 `NSLocalNetworkUsageDescription` in der `Info.plist` blockiert iOS jede
 Verbindung — stillschweigend.
 
-Und: **das iPhone versorgt den Scanner nicht.** Der LiDAR und der
+Und: **das iPhone versorgt den Scanner nicht.** Der LiDAR braucht 5 V, der
 Servo 12 V. Das Kabel überträgt nur Daten, der Scanner hat sein eigenes
 Netzteil.
 
