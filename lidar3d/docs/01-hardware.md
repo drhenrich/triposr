@@ -7,7 +7,7 @@
 | RPLIDAR S2 | 190 g, 77 × 77 × 38,85 mm, 5 V, >2 W, TTL-UART 3,3 V @ 1 MBaud |
 | ESP32-S3 DevKitC-1 | zwei Kerne, genug RAM für die Queue, 3,3-V-UART |
 | Feetech STS3215 Busservo | Ausführung **12 V / 30 kg·cm / magnetische Kodierung** (C018), 1:345, 12-bit-Absolutencoder, TTL halbduplex, ab Werk ID 1 und 1 MBaud |
-| Bustreiber für den Servo | Feetech FE-URT-1 oder ein 74HC241 — oder der ESP32 schaltet die Richtung selbst, siehe unten |
+| Widerstand 1 kΩ für den Servobus | mehr braucht die Signalleitung nicht — siehe Verkabelung |
 | Rillenkugellager 6808 o. ä. | großer Innendurchmesser, damit das Kabel mittig durchgeht |
 | Netzteil 12 V / ≥3 A | |
 | Step-Down 12 V → 5 V, ≥2 A | für LiDAR und ESP32 |
@@ -127,6 +127,9 @@ Bus-Baudrate 1 MBaud, Servo-ID 1 (Werkseinstellung).
 
 #### Die Signalleitung: drei Wege
 
+Der einfachste ist **c)** — ein Widerstand, sonst nichts. Er ist die Vorgabe
+in `config.h` und braucht kein Zusatzbauteil.
+
 **a) Feetech FE-URT-1** — `SERVO_DIR_PIN -1` in `config.h`.
 
 Das Board hat neben der USB-Buchse einen **TTL-Stiftleiste** für genau diesen
@@ -172,16 +175,37 @@ ESP32 GPIO 16 (RX) ◄── RO      Transceiver ──► Signalleitung des Ser
 ESP32 GPIO  7      ──► DE/RE
 ```
 
-**c) Ohne alles — nur ein Widerstand.** `SERVO_DIR_PIN -1`.
-
-Geht auch, und für den Anfang reicht es:
+**c) Ohne alles — nur ein Widerstand.** `SERVO_DIR_PIN -1`. **Die Vorgabe.**
 
 ```
-ESP32 GPIO 15 (TX) ──[ 1 kΩ ]──┬── Signalleitung des Servos
+ESP32 GPIO 15 (TX) ──[ 1 kΩ ]──┬── Signalleitung des Servos (gelb/weiß)
 ESP32 GPIO 16 (RX) ────────────┘
+                     ↑
+             nur im Sendezweig — RX hängt direkt am Bus
 ```
 
-Der Widerstand begrenzt den Strom, wenn ESP32 und Servo gleichzeitig treiben.
+Der Widerstand sitzt **nur in der TX-Leitung**. Er begrenzt den Strom auf
+3,3 mA, wenn ESP32 und Servo einmal gleichzeitig treiben — das passiert am
+Halbduplex-Bus zwangsläufig bei jedem Richtungswechsel. Ohne ihn stehen sich
+zwei Gegentaktausgänge kurzgeschlossen gegenüber.
+
+**Vor dem ersten Anstecken einmal messen.** RX hängt ohne Schutz am Bus. Ein
+Multimeter an Signal und GND, Servo mit 12 V versorgt, ESP32 noch **nicht**
+angeschlossen:
+
+| Ruhespannung | was tun |
+|---|---|
+| ~3,3 V | direkt anschließen, alles gut |
+| ~5 V | **nicht** direkt an GPIO 16 — Spannungsteiler (z. B. 1,8 kΩ / 3,3 kΩ) oder Pegelwandler dazwischen |
+
+Die 30 Sekunden lohnen: der STS3215 wird als „3,3 V/5 V TTL" beworben, und
+was er am Ende *ausgibt*, steht nirgends verbindlich. Ein ESP32-Eingang
+verträgt 3,6 V.
+
+Bleibt die Verbindung unzuverlässig — Timeouts, sporadische Prüfsummenfehler
+—, ist bei 1 MBaud der Widerstand zu groß für die Leitungskapazität. Dann auf
+470 Ω heruntergehen (7 mA, immer noch unkritisch) und die Leitung kurz
+halten.
 Dabei hört der ESP32 **sein eigenes Gesendetes** wieder mit. Das ist kein
 Schönheitsfehler: ein Kommando ist genauso gerahmt wie eine Antwort — `FF FF`,
 ID, Länge, ein Byte, Parameter, Prüfsumme. Der Parser hält es für ein gültiges
