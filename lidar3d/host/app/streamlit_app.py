@@ -75,8 +75,13 @@ live = st.sidebar.toggle("Live aktualisieren", value=True)
 refresh_s = st.sidebar.slider("Aktualisierung (s)", 0.1, 2.0, 0.3, 0.1)
 
 st.sidebar.divider()
+autoscale = st.sidebar.toggle(
+    "Ansicht an Daten anpassen", value=True,
+    help="Zoomt auf das, was tatsaechlich gemessen wird. Ausschalten, um den "
+         "Massstab ueber mehrere Aufnahmen hinweg fest zu halten.")
 max_range_m = st.sidebar.slider("Max. Reichweite (m)", 1.0, 15.0, 12.0, 0.5,
-                                help="Der C1 schafft 12 m auf weissen Flaechen.")
+                                help="Filtert weiter entfernte Messungen weg. "
+                                     "Der C1 schafft 12 m auf weissen Flaechen.")
 min_range_mm = st.sidebar.slider("Blindzone (mm)", 0, 500, 150, 10)
 min_quality = st.sidebar.slider("Mindestguete", 0, 63, 0,
                                help="0 laesst alles durch. Hoeher filtert schwache Echos.")
@@ -137,16 +142,25 @@ with tab_live:
             ys = [s.distance_mm / 1000 * math.cos(math.radians(s.angle_deg)) for s in pts]
             dist = [s.distance_mm / 1000 for s in pts]
 
+            if autoscale:
+                # Auf halbe Meter aufrunden, damit die Achse beim Live-Betrieb
+                # nicht von Bild zu Bild zappelt.
+                extent = max(max(abs(v) for v in xs), max(abs(v) for v in ys))
+                view = max(0.5, math.ceil(extent * 2.2) / 2)
+            else:
+                view = max_range_m
+
+            ring_step = 1 if view <= 6 else 2
             figure = go.Figure()
             # Entfernungsringe als Orientierung.
-            for radius in range(2, int(max_range_m) + 1, 2):
+            for radius in range(ring_step, int(view) + 1, ring_step):
                 figure.add_shape(type="circle", xref="x", yref="y",
                                  x0=-radius, y0=-radius, x1=radius, y1=radius,
                                  line=dict(color="rgba(120,120,120,0.35)", width=1))
             figure.add_trace(go.Scattergl(
                 x=xs, y=ys, mode="markers",
                 marker=dict(size=point_size, color=dist, colorscale="Viridis",
-                            cmin=0, cmax=max_range_m,
+                            cmin=0, cmax=max(dist) if autoscale else max_range_m,
                             colorbar=dict(title="m")),
                 hovertemplate="%{customdata[0]:.2f}° · %{customdata[1]:.2f} m"
                               "<extra></extra>",
@@ -154,14 +168,16 @@ with tab_live:
             ))
             figure.update_layout(
                 height=620, margin=dict(l=10, r=10, t=10, b=10),
-                xaxis=dict(title="m", range=[-max_range_m, max_range_m],
+                xaxis=dict(title="m", range=[-view, view],
                            scaleanchor="y", scaleratio=1, zeroline=True),
-                yaxis=dict(title="m", range=[-max_range_m, max_range_m], zeroline=True),
+                yaxis=dict(title="m", range=[-view, view], zeroline=True),
                 showlegend=False,
             )
             st.plotly_chart(figure, use_container_width=True)
-            st.caption(f"{len(pts)} von {len(revolution)} Messungen dargestellt. "
-                       "Der Sensor sitzt im Ursprung; die Ringe stehen alle 2 m.")
+            st.caption(
+                f"{len(pts)} von {len(revolution)} Messungen dargestellt. "
+                f"Der Sensor sitzt im Ursprung; die Ringe stehen alle "
+                f"{ring_step} m. Weiteste Messung {max(dist):.2f} m.")
 
 
 # ---------------------------------------------------------------------------
