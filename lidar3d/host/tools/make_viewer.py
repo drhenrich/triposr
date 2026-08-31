@@ -25,6 +25,7 @@ from typing import List, Optional, Tuple
 # Das Paket liegt eine Ebene ueber diesem Ordner.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from scan3d.alignment import estimate_alpha_zero, rotate_cloud  # noqa: E402
 from scan3d.quality import analyse, verdict  # noqa: E402
 
 Point = Tuple[float, float, float]
@@ -359,6 +360,12 @@ const rows = [
   ["Streuung Sektoren", INFO.sector_spread === null
       ? "–" : (INFO.sector_spread * 1000).toFixed(0) + " mm"],
 ];
+// Wurde die Nulllage nachtraeglich gerichtet, muss das auf der Seite stehen -
+// sonst sieht sie aus wie die Rohaufnahme und ist es nicht.
+if (INFO.applied_alpha_zero_deg) {
+  rows.push(["Nulllage korrigiert",
+             INFO.applied_alpha_zero_deg.toFixed(0) + "°"]);
+}
 document.getElementById("readout").innerHTML =
   rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
 
@@ -556,10 +563,35 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("-o", "--output", default="viewer.html")
     parser.add_argument("--label", default=None,
                         help="Beschriftung; sonst der Dateiname")
+    parser.add_argument("--alpha0", type=float, default=None, metavar="GRAD",
+                        help="Nulllage des Scanwinkels nachtraeglich korrigieren: "
+                             "jede Scanebene wird um diesen Winkel in sich "
+                             "gedreht. 'auto' entspricht --auto-alpha0.")
+    parser.add_argument("--auto-alpha0", action="store_true",
+                        help="Nulllage aus den Daten schaetzen und anwenden - "
+                             "gesucht wird der Winkel, bei dem Decke und Boden "
+                             "waagerecht werden.")
     args = parser.parse_args(argv)
 
     points = read_ply(args.ply)
+
+    delta = args.alpha0
+    if args.auto_alpha0:
+        guess = estimate_alpha_zero(points)
+        if not guess["confident"]:
+            print("Nulllage nicht schaetzbar: keine ausreichend grosse ebene "
+                  "Flaeche gefunden. Unveraendert uebernommen.")
+        else:
+            delta = guess["alpha_zero_deg"]
+            print(f"Nulllage geschaetzt: alpha_zero = {delta:.0f} Grad "
+                  f"({guess['surface_points']} Punkte auf einer Hoehe, "
+                  f"{guess['surface_height_m']:+.2f} m). Auf dem Kopf waere es "
+                  f"{guess['mirrored_deg']:.0f} Grad.")
+    if delta:
+        points = rotate_cloud(points, delta)
+
     info = analyse(points)
+    info["applied_alpha_zero_deg"] = delta or 0.0
     label = args.label or os.path.splitext(os.path.basename(args.ply))[0]
 
     with open(args.output, "w", encoding="utf-8") as fh:

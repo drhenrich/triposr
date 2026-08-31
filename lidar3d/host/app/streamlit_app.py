@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scan3d import ply, rplidar  # noqa: E402
 from scan3d.geometry import MountGeometry, to_cartesian  # noqa: E402
+from scan3d.alignment import TOLERANCE_DEG  # noqa: E402
 from scan3d.quality import analyse, verdict  # noqa: E402
 from scan3d.reader import LidarReader  # noqa: E402
 from scan3d.serial_source import BAUDRATE_C1  # noqa: E402
@@ -269,6 +270,11 @@ if "yaw_deg" not in st.session_state:
     st.session_state.yaw_deg = 0.0
 if "_pending_yaw" in st.session_state:
     st.session_state.yaw_deg = st.session_state.pop("_pending_yaw")
+if "alpha_zero" not in st.session_state:
+    st.session_state.alpha_zero = 0.0
+if "_pending_alpha_zero" in st.session_state:
+    # Dasselbe Spiel wie beim Gierwinkel: erst vormerken, hier anwenden.
+    st.session_state.alpha_zero = st.session_state.pop("_pending_alpha_zero")
 with tab_3d:
     # Frisch holen: die Aufnahme soll die zuletzt gemessene Ebene nehmen,
     # nicht die vom letzten vollstaendigen Seitenaufbau.
@@ -347,6 +353,25 @@ with tab_3d:
                "plausibel": st.success}.get(level, st.info)
         box(f"**{headline}** — {text}")
 
+        # Steht die Nulllage schief, laesst sie sich aus den Rohzeilen ohne
+        # neuen Scan korrigieren: die Wolke wird einfach neu gerechnet.
+        est = info["alignment"]
+        off_by = info["alpha_zero_off_by_deg"]
+        if est["confident"] and off_by is not None and off_by > TOLERANCE_DEG:
+            fix = st.columns(2)
+            if fix[0].button(f"alpha_zero = {est['alpha_zero_deg']:.0f}° "
+                             "übernehmen und neu rechnen",
+                             use_container_width=True, type="primary"):
+                st.session_state._pending_alpha_zero = est["alpha_zero_deg"]
+                st.session_state._rebuild = True
+                st.rerun()
+            if fix[1].button(f"… oder {est['mirrored_deg']:.0f}° "
+                             "(Raum steht dann auf dem Kopf)",
+                             use_container_width=True):
+                st.session_state._pending_alpha_zero = est["mirrored_deg"]
+                st.session_state._rebuild = True
+                st.rerun()
+
     st.divider()
     st.markdown(
         "Ablauf wie bei der Firmware, nur von Hand: Achse auf einen Gierwinkel "
@@ -371,8 +396,14 @@ with tab_3d:
             help="Abstand des optischen Zentrums von der Drehachse. Falsch "
                  "eingestellt kruemmt er ebene Waende - siehe docs/02-geometrie.md.")
         offset_axial = st.number_input("Versatz axial (mm)", value=0.0, step=1.0)
-        alpha_zero = st.number_input("alpha_zero (Grad)", value=0.0, step=1.0,
-                                     help="LiDAR-Winkel, der nach oben zeigt.")
+        alpha_zero = st.number_input(
+            "alpha_zero (Grad)", step=1.0, key="alpha_zero",
+            help="Der LiDAR-Winkel, der nach oben zeigt. Der C1 zählt seine "
+                 "Winkel ab einer Marke am Gehäuse; hochkant montiert zeigt "
+                 "die zur Seite, also sind hier meist **90** (oder 270) "
+                 "richtig, nicht 0. Steht hier 0, obwohl die Marke seitlich "
+                 "zeigt, wird der Abstand zur Decke als Radius verrechnet und "
+                 "die Wolke wird zu einem Zylinder.")
         alpha_sign = 1 if st.radio("Drehsinn alpha", ["normal", "gespiegelt"],
                                    horizontal=True) == "normal" else -1
 
@@ -403,11 +434,21 @@ with tab_3d:
                 help="Gleiche Spalten wie das Instructables-Skript, damit "
                      "convertAdjust.py die Datei direkt lesen kann.")
 
+    mount = MountGeometry(offset_radial_mm=offset_radial,
+                          offset_axial_mm=offset_axial,
+                          alpha_zero_deg=alpha_zero,
+                          alpha_sign=alpha_sign)
+
+    # Die Einbaulage geht erst beim Aufnehmen ein. Wer sie nachtraeglich
+    # aendert, muss die Wolke deshalb aus den Rohzeilen neu rechnen - sonst
+    # wirkt die Korrektur nur auf die naechsten Ebenen.
+    if st.session_state.pop("_rebuild", False) and st.session_state.rows:
+        st.session_state.cloud = [
+            to_cartesian(float(distance), float(angle), float(rotation), mount)
+            for _quality, angle, distance, rotation in st.session_state.rows]
+        st.rerun()
+
     if capture and revolution:
-        mount = MountGeometry(offset_radial_mm=offset_radial,
-                              offset_axial_mm=offset_axial,
-                              alpha_zero_deg=alpha_zero,
-                              alpha_sign=alpha_sign)
         added = 0
         for s in revolution:
             if not keep(s):

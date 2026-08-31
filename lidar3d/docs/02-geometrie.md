@@ -118,11 +118,38 @@ eingetragen.
 
 ### 1. `alpha_zero` und `alpha_sign` — wo ist oben?
 
-Der Scanner in einen Raum mit ebenem Boden stellen. Ein Sweep, dann in
-CloudCompare den Boden anschauen. Ist er nicht waagerecht, stimmt `alpha_zero`
-nicht. Ist die Wolke gespiegelt (Decke unten), `--alpha-sign -1` setzen.
+**Das ist der Wert, der am häufigsten schiefgeht — und der auffälligste Fehler
+überhaupt.** Der LiDAR zählt seine Winkel ab einer Marke am Gehäuse. Liegt das
+Gerät flach, zeigt sie waagerecht nach vorn. Stellt man es für den 3D-Scan
+hochkant, zeigt sie zur Seite, nicht nach oben — beim C1 sind deshalb **90°
+(oder 270°) richtig, nicht 0°**.
 
-Genauer geht es so: eine einzelne Scanebene aufnehmen (`--yaw-rate 0`) und den
+Steht hier fälschlich 0, wird der Abstand zur Decke als Radius verrechnet. Um
+die Achse gedreht wird daraus ein Zylinder mit genau diesem Radius: die Wolke
+sieht aus wie ein **runder Raum**, obwohl der Aufbau völlig richtig steht. Die
+Raumtiefe landet dabei in der Höhe, die Wolke wird also **höher als breit** —
+das ist das schnellste Erkennungsmerkmal.
+
+Nicht verwechseln mit dem anderen Rundraum: bei falscher *Einbaulage* (Gerät
+liegt flach, Scanebene enthält die Drehachse nicht) misst jede Ebene denselben
+waagerechten Ring. Da hilft nur Umbauen, kein Parameter.
+
+Schätzen statt messen: `scan3d.alignment.estimate_alpha_zero` sucht den Winkel,
+bei dem möglichst viele Punkte auf genau dieselbe Höhe fallen — also den, bei
+dem Decke und Boden waagerecht werden. In der Streamlit-App bietet der Befund
+den gefundenen Wert direkt zum Übernehmen an und rechnet die Wolke aus den
+Rohzeilen neu; für eine fertige Datei:
+
+```
+python tools/make_viewer.py scan.ply -o scan.html --auto-alpha0
+```
+
+Bleibt eine Mehrdeutigkeit, die in den Messwerten nicht steckt: `alpha_zero` und
+`alpha_zero + 180°` erzeugen dieselbe Wolke, nur auf dem Kopf. Welche der beiden
+Flächen Decke und welche Boden ist, muss der Mensch sagen — oder `alpha_sign -1`
+setzen, wenn die Wolke gespiegelt ist.
+
+Von Hand geht es auch: eine einzelne Scanebene aufnehmen (`--yaw-rate 0`) und den
 LiDAR-Winkel des tiefsten Punktes ablesen. Dieser Winkel minus 180° ist
 `alpha_zero`.
 

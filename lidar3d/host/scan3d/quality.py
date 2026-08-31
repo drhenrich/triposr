@@ -9,6 +9,15 @@ den ersten Blick nach einer Punktwolke aus, enthaelt aber keine Raumform.
 Genau darauf zielt ``sector_spread``: der Abstand zur Drehachse, verglichen
 ueber die Himmelsrichtungen. Bei einem Raum schwankt er (Ecken), bei einem
 Rotationskoerper nicht.
+
+Der zweite haeufige Fehler liegt nicht an der Einbaulage, sondern an der
+*Nulllage des LiDAR-Winkels*: das Geraet steht richtig, aber seine Winkel
+zaehlen ab einer Marke, die zur Seite zeigt statt nach oben. Dann wird der
+Abstand zur Decke als Radius verrechnet, und die Drehung macht daraus einen
+Zylinder - ebenfalls ein Rundraum, aber mit ganz anderer Ursache und Abhilfe.
+Erkennen laesst er sich daran, dass die Wolke hoeher als breit wird und dass
+sich eine Nulllage finden laesst, bei der Decke und Boden waagerecht werden -
+siehe ``alignment.py``.
 """
 
 from __future__ import annotations
@@ -16,6 +25,8 @@ from __future__ import annotations
 import math
 import statistics as stat
 from typing import Dict, List, Optional, Sequence, Tuple
+
+from .alignment import TOLERANCE_DEG, deviation_deg, estimate_alpha_zero
 
 Point = Tuple[float, float, float]
 
@@ -71,9 +82,15 @@ def analyse(points: Sequence[Point]) -> Dict:
     ratio = (max(values) / min(values)
              if coverage >= MIN_COVERAGE and min(values) > 1e-6 else None)
 
+    alignment = estimate_alpha_zero(points)
+    off_by = (deviation_deg(alignment["alpha_zero_deg"])
+              if alignment["confident"] else None)
+
     return {
         "count": len(points),
         "planes": len(planes),
+        "alignment": alignment,
+        "alpha_zero_off_by_deg": off_by,
         "extent": [max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs)],
         "bounds": [[min(xs), max(xs)], [min(ys), max(ys)], [min(zs), max(zs)]],
         "median_radius": radii[len(radii) // 2],
@@ -98,6 +115,27 @@ def verdict(info: Dict) -> Tuple[str, str, str]:
                 "Punkte. Über die Form lässt sich so nichts sagen — es fehlen "
                 "Scanebenen, oder der Gierbereich war zu klein. 180° decken die "
                 "volle Kugel ab.")
+
+    # Vor der Formbeurteilung: stimmt ueberhaupt die Nulllage des Scanwinkels?
+    # Wenn nicht, ist jede Aussage ueber die Raumform gegenstandslos - die
+    # Wolke zeigt dann nicht den Raum, sondern eine verdrehte Fassung davon.
+    off_by: Optional[float] = info.get("alpha_zero_off_by_deg")
+    if off_by is not None and off_by > TOLERANCE_DEG:
+        est = info["alignment"]
+        extent = info["extent"]
+        width = max(extent[0], extent[1])
+        return ("kritisch", "Die Nulllage des Scanwinkels stimmt nicht",
+                f"Um {off_by:.0f}° verdreht. Waagerecht wird die Wolke erst bei "
+                f"**alpha_zero = {est['alpha_zero_deg']:.0f}°** "
+                f"(oder {est['mirrored_deg']:.0f}°, dann steht der Raum auf dem "
+                f"Kopf) — dort fallen {est['surface_points']} Punkte auf eine "
+                f"einzige Höhe, also auf eine echte Decke oder einen echten "
+                f"Boden. Der LiDAR zählt seine Winkel ab einer Marke am Gehäuse; "
+                f"hochkant montiert zeigt die zur Seite statt nach oben. So wird "
+                f"der Abstand zur Decke als Radius verrechnet und beim Drehen zu "
+                f"einem Zylinder verschmiert — der Raum wirkt rund. Sichtbar ist "
+                f"das auch an den Maßen: {extent[2]:.1f} m hoch, aber nur "
+                f"{width:.1f} m breit.")
 
     if spread < REVOLUTION_THRESHOLD_M and (ratio is None or ratio < 1.1):
         return ("kritisch", "Die Wolke ist ein Rotationskörper",
