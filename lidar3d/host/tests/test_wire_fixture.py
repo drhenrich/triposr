@@ -37,7 +37,8 @@ class TestWireFixture(unittest.TestCase):
                     (2.95, 1020), (3.68, 1025), (4.39, 1030), (5.14, 1035)]
 
     def test_fixture_has_all_frame_types(self):
-        self.assertEqual(set(self.fixture), {"scan", "capsule", "hello", "status"})
+        self.assertEqual(set(self.fixture),
+                         {"scan", "capsule", "hello", "status", "fault"})
 
     def test_scan_bytes(self):
         raw = stream.encode_scan(
@@ -96,6 +97,33 @@ class TestWireFixture(unittest.TestCase):
         )
         self.assertEqual(raw, self.fixture["capsule"])
         self.assertEqual(len(raw), 104)
+
+    FAULT_TEXT = ("STS3215 antwortet nicht. Bus-ID, Baudrate (1 Mbaud), "
+                  "Halbduplex und 12 V pruefen.")
+
+    def test_fault_bytes(self):
+        raw = stream.encode_fault(9, stream.FAULT_SERVO, self.FAULT_TEXT)
+        self.assertEqual(raw, self.fixture["fault"])
+
+    def test_fault_decodes_back(self):
+        fault = stream.decode_fault(
+            next(iter(stream.FrameParser().feed(self.fixture["fault"])))
+        )
+        self.assertEqual(fault.code, stream.FAULT_SERVO)
+        self.assertEqual(fault.text, self.FAULT_TEXT)
+        self.assertEqual(fault.seq, 9)
+
+    def test_fault_text_is_capped(self):
+        raw = stream.encode_fault(0, stream.FAULT_QUEUE, "x" * 400)
+        fault = stream.decode_fault(next(iter(stream.FrameParser().feed(raw))))
+        self.assertEqual(len(fault.text), stream.FAULT_MAX_TEXT_LEN)
+
+    def test_fault_with_mismatched_length_is_rejected(self):
+        raw = bytearray(self.fixture["fault"])
+        raw[8 + 1] = 200  # Laengenbyte hochsetzen, ohne Text anzuhaengen
+        frame = next(iter(stream.FrameParser().feed(bytes(raw))))
+        with self.assertRaises(ValueError):
+            stream.decode_fault(frame)
 
     def test_hello_bytes(self):
         payload = stream._HELLO.pack(1, 600, -40500, 12000, 0, round(180 * 65536))

@@ -47,10 +47,33 @@ final class WireFixtureTests: XCTestCase {
 
     func testFixtureLoads() throws {
         let fixture = try Self.loadFixture()
-        XCTAssertEqual(Set(fixture.keys), ["scan", "capsule", "hello", "status"])
+        XCTAssertEqual(Set(fixture.keys),
+                       ["scan", "capsule", "hello", "status", "fault"])
         XCTAssertEqual(fixture["capsule"]?.count, 104)
         // 8 Header + 12 Kopf + 8 Messungen a 4 Byte
         XCTAssertEqual(fixture["scan"]?.count, 52)
+    }
+
+    func testDecodesFault() throws {
+        let fixture = try Self.loadFixture()
+        var parser = FrameParser()
+        let frames = parser.feed(fixture["fault"]!)
+        XCTAssertEqual(frames.count, 1)
+
+        let fault = try XCTUnwrap(FaultFrame(frames[0]))
+        XCTAssertEqual(fault.seq, 9)
+        XCTAssertEqual(fault.code, .servo)
+        XCTAssertEqual(fault.text,
+                       "STS3215 antwortet nicht. Bus-ID, Baudrate (1 Mbaud), "
+                       + "Halbduplex und 12 V pruefen.")
+    }
+
+    func testRejectsFaultWithMismatchedLength() throws {
+        let fixture = try Self.loadFixture()
+        var bytes = fixture["fault"]!
+        bytes[8 + 1] = 200  // Laengenbyte hochsetzen, ohne Text anzuhaengen
+        var parser = FrameParser()
+        XCTAssertNil(FaultFrame(parser.feed(bytes)[0]))
     }
 
     func testDecodesScan() throws {

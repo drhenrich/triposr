@@ -15,6 +15,27 @@ public enum FrameType: UInt8, Sendable {
     case status = 2
     /// C1: Messungen mit eigenem Winkel je Stueck.
     case scan = 3
+    /// Hochlauf misslungen, mit Klartext.
+    case fault = 4
+}
+
+/// Woran der Hochlauf des Scanners gescheitert ist.
+///
+/// Der Scanner bleibt dabei im Netz erreichbar und meldet den Grund - sonst
+/// saehe er von aussen aus wie ein Geraet ohne Firmware, und man braeuchte das
+/// serielle Kabel, um ueberhaupt etwas zu erfahren.
+public enum FaultCode: UInt8, Sendable {
+    /// Kein Fehler. Heisst bewusst nicht `none` - das kollidiert in Swift zu
+    /// leicht mit `Optional.none` und macht Vergleiche mehrdeutig.
+    case ok = 0
+    /// Der STS3215 antwortet nicht.
+    case servo = 1
+    /// Die UART zum LiDAR liess sich nicht oeffnen.
+    case lidarPort = 2
+    /// Kein Scanmodus liess sich starten.
+    case lidarScan = 3
+    /// Der Speicher fuer die Frame-Queue fehlt.
+    case queue = 4
 }
 
 public struct FrameFlags: OptionSet, Sendable {
@@ -235,6 +256,26 @@ public struct ScanFrame: Sendable, MeasurementFrame {
         for (i, dist) in distancesMm.enumerated() {
             body(Float(dist), anglesDeg[i], yawStartDeg + yawSpan * Float(i) / n)
         }
+    }
+}
+
+public struct FaultFrame: Sendable {
+    public static let maxTextLength = 96
+
+    public let seq: UInt16
+    public let code: FaultCode
+    /// Klartext vom Scanner, ASCII. Direkt anzeigbar.
+    public let text: String
+
+    public init?(_ frame: Frame) {
+        guard frame.type == FrameType.fault.rawValue,
+              frame.payload.count >= 2 else { return nil }
+        let p = frame.payload
+        let length = Int(p[1])
+        guard p.count == 2 + length else { return nil }
+        seq = frame.seq
+        code = FaultCode(rawValue: p[0]) ?? .ok
+        text = String(decoding: p[2...], as: UTF8.self)
     }
 }
 

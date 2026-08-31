@@ -222,6 +222,14 @@ Die Swift-Seite bringt aber eigene Tests mit: ein `swift test` auf dem Mac
 prüft den Decoder gegen dieselbe Byte-Fixture wie die anderen beiden
 Implementierungen — bevor Hardware im Spiel ist.
 
+**Wenn der ESP32 kein WLAN aufspannt**, ist die Firmware entweder nicht
+geflasht, oder sie ist eine Fassung vor diesem Stand: bis dahin kam das Netz
+erst nach den Hardwareprüfungen hoch, und jede blieb im Fehlerfall stehen.
+Fehlte der Servo — etwa weil noch von Hand gedreht wird —, gab es nie ein
+Netz `lidar3d` und nie eine USB-Adresse. Seit `stream_proto.h` den
+FAULT-Frame kennt, kommt das Netz zuerst und der Scanner meldet den Grund
+selbst; siehe `docs/03-protokolle.md`.
+
 Vor dem ersten Einschalten `docs/01-hardware.md` lesen, besonders den
 Abschnitt zur Stromversorgung.
 

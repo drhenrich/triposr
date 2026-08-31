@@ -23,6 +23,17 @@ TYPE_HELLO = 0
 TYPE_CAPSULE = 1  # S2: 40 Messungen auf gleichmaessigem Winkelraster
 TYPE_STATUS = 2
 TYPE_SCAN = 3     # C1: Messungen mit eigenem Winkel je Stueck
+TYPE_FAULT = 4    # Hochlauf misslungen, mit Klartext
+
+#: Gruende, aus denen der Hochlauf scheitern kann. Der Scanner bleibt dabei
+#: im Netz erreichbar und meldet den Grund - sonst braeuchte es das serielle
+#: Kabel, um ueberhaupt zu sehen, dass die Firmware laeuft.
+FAULT_NONE = 0
+FAULT_SERVO = 1        # STS3215 antwortet nicht
+FAULT_LIDAR_PORT = 2   # UART zum LiDAR liess sich nicht oeffnen
+FAULT_LIDAR_SCAN = 3   # kein Scanmodus liess sich starten
+FAULT_QUEUE = 4        # Speicher fuer die Frame-Queue fehlt
+FAULT_MAX_TEXT_LEN = 96
 
 FLAG_NEW_REVOLUTION = 1 << 0
 FLAG_SWEEP_ACTIVE = 1 << 1
@@ -133,6 +144,15 @@ class ScanFrame:
 
 
 @dataclass(frozen=True)
+class FaultFrame:
+    """Der Scanner laeuft, aber der Hochlauf ist gescheitert."""
+
+    seq: int
+    code: int
+    text: str
+
+
+@dataclass(frozen=True)
 class HelloFrame:
     fw_version: int
     lidar_rpm: int
@@ -237,6 +257,26 @@ def decode_scan(frame: Frame) -> ScanFrame:
         angles_deg=tuple(raw[2 * i] / 64.0 for i in range(count)),
         distances_mm=tuple(raw[2 * i + 1] for i in range(count)),
     )
+
+
+def encode_fault(seq: int, code: int, text: str) -> bytes:
+    """Nur fuer Tests und den Simulator - die Firmware baut das in C++."""
+    raw = text.encode("ascii", "replace")[:FAULT_MAX_TEXT_LEN]
+    return encode_frame(TYPE_FAULT, 0, seq,
+                        bytes([code, len(raw)]) + raw)
+
+
+def decode_fault(frame: Frame) -> FaultFrame:
+    if frame.type != TYPE_FAULT:
+        raise ValueError(f"kein Fault-Frame (type={frame.type})")
+    if len(frame.payload) < 2:
+        raise ValueError("Fault-Payload zu kurz")
+    code, length = frame.payload[0], frame.payload[1]
+    if len(frame.payload) != 2 + length:
+        raise ValueError(
+            f"Fault-Payload hat {len(frame.payload)} Byte, erwartet {2 + length}")
+    return FaultFrame(seq=frame.seq, code=code,
+                      text=frame.payload[2:].decode("ascii", "replace"))
 
 
 def decode_hello(frame: Frame) -> HelloFrame:

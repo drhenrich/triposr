@@ -142,7 +142,7 @@ TCP, Port 5005. Alles little endian.
 | Offset | Typ | Feld |
 |---|---|---|
 | 0 | u16 | Magic `0x4E57` (`'NW'`) |
-| 2 | u8 | Typ: 0 = HELLO, 1 = CAPSULE, 2 = STATUS, 3 = SCAN |
+| 2 | u8 | Typ: 0 = HELLO, 1 = CAPSULE, 2 = STATUS, 3 = SCAN, 4 = FAULT |
 | 3 | u8 | Flags |
 | 4 | u16 | Sequenznummer |
 | 6 | u16 | Länge der Nutzlast |
@@ -218,6 +218,27 @@ beendet den Sweep — daran erkennt `collect_sweep()` das Ende.
 
 `dropped_frames > 0` heißt: das WLAN kam nicht mit und die Queue lief über. Die
 Wolke hat dann Lücken.
+
+### FAULT, 2 + n Byte Nutzlast (n ≤ 96)
+
+| Offset | Typ | Feld |
+|---|---|---|
+| 0 | u8 | `code` — 1 Servo, 2 LiDAR-UART, 3 Scanmodus, 4 Queue |
+| 1 | u8 | `len` — Länge des Textes |
+| 2 | n | ASCII-Klartext, ohne Nullterminierung |
+
+Wird direkt nach dem HELLO gesendet, solange der Hochlauf gescheitert ist,
+und erneut auf jedes `'S'`.
+
+**Warum es diesen Frame gibt.** Die Firmware brachte das Netz früher *nach*
+den Hardwareprüfungen hoch, und jede Prüfung blieb im Fehlerfall in einer
+Endlosschleife stehen. Fehlte also nur der Servo, spannte der ESP32 nie ein
+WLAN auf und meldete sich nie am USB — von außen sah das aus, als sei gar
+keine Firmware drauf, und der Grund war nur am seriellen Kabel zu erfahren.
+
+Jetzt kommt das Netz zuerst, die Prüfungen halten nichts mehr an, und der
+Scanner sagt selbst, was fehlt. Ohne funktionierende Achse startet er keinen
+Sweep — alle Gierwinkel wären gelogen.
 
 ### Kommandos vom Host
 

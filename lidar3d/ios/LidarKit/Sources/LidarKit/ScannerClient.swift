@@ -63,6 +63,8 @@ public final class ScannerClient: @unchecked Sendable {
     public var onState: ((ScannerConnectionState) -> Void)?
     public var onHello: ((HelloFrame) -> Void)?
     public var onStatus: ((StatusFrame) -> Void)?
+    /// Der Scanner laeuft, aber sein Hochlauf ist gescheitert - Grund im Text.
+    public var onFault: ((FaultFrame) -> Void)?
 
     public init() {}
 
@@ -188,6 +190,10 @@ public final class ScannerClient: @unchecked Sendable {
         case FrameType.status.rawValue:
             if let status = StatusFrame(frame) {
                 DispatchQueue.main.async { self.onStatus?(status) }
+            }
+        case FrameType.fault.rawValue:
+            if let fault = FaultFrame(frame) {
+                DispatchQueue.main.async { self.onFault?(fault) }
             }
         default:
             break

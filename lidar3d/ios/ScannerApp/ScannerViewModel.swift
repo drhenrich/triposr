@@ -16,6 +16,8 @@ final class ScannerViewModel: ObservableObject {
     @Published private(set) var connection: ScannerConnectionState = .idle
     @Published private(set) var hello: HelloFrame?
     @Published private(set) var status: StatusFrame?
+    /// Gesetzt, wenn der Scanner meldet, dass sein Hochlauf gescheitert ist.
+    @Published private(set) var fault: FaultFrame?
     @Published private(set) var framesPerSecond: Double = 0
     @Published var pointSize: Float = 3.0
 
@@ -59,6 +61,9 @@ final class ScannerViewModel: ObservableObject {
         client.onStatus = { [weak self] status in
             MainActor.assumeIsolated { self?.apply(status) }
         }
+        client.onFault = { [weak self] fault in
+            MainActor.assumeIsolated { self?.fault = fault }
+        }
     }
 
     private func apply(_ status: StatusFrame) {
@@ -76,6 +81,7 @@ final class ScannerViewModel: ObservableObject {
     // MARK: - Steuerung
 
     func connect() {
+        fault = nil
         lastFrameCount = 0
         lastFrameSampleTime = Date()
         client.connect()
@@ -110,7 +116,14 @@ final class ScannerViewModel: ObservableObject {
         }
     }
 
+    /// Was der Scanner meldet, wenn er zwar antwortet, aber nicht scannen kann.
+    var faultLabel: String? {
+        guard let fault, fault.code != .ok else { return nil }
+        return fault.text
+    }
+
     var stateLabel: String {
+        if fault != nil { return "gestoert" }
         switch status?.state {
         case .homing: return "referenzieren"
         case .sweeping: return "Sweep laeuft"

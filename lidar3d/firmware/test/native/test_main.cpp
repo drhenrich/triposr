@@ -547,6 +547,36 @@ static void testWireFormat(const char *fixturePath) {
   CHECK_EQ(n, kHeaderSize + kScanHeadSize + kScanSampleSize * 8);
   CHECK_EQ(n, 52u);
   CHECK(toHex(buf, n) == fixture["scan"]);
+
+  // Fehlerframe: der Scanner bleibt erreichbar und sagt, was fehlt.
+  const char *faultText =
+      "STS3215 antwortet nicht. Bus-ID, Baudrate (1 Mbaud), Halbduplex und "
+      "12 V pruefen.";
+  n = writeFaultFrame(buf, 9, kFaultServo, faultText);
+  CHECK_EQ(n, kHeaderSize + 2 + std::strlen(faultText));
+  CHECK(toHex(buf, n) == fixture["fault"]);
+}
+
+static void testFaultFrameCapsTheText() {
+  CASE("Protokoll: ueberlanger Fehlertext wird gekappt");
+  uint8_t buf[kMaxFrameSize];
+  std::string tooLong(300, 'x');
+  size_t n = writeFaultFrame(buf, 0, kFaultQueue, tooLong.c_str());
+  CHECK_EQ(n, kHeaderSize + 2 + kFaultMaxTextLen);
+  // Laengenbyte und Rahmenlaenge muessen zusammenpassen, sonst verwirft der
+  // Empfaenger den Frame.
+  CHECK_EQ(static_cast<size_t>(buf[kHeaderSize + 1]), kFaultMaxTextLen);
+  CHECK_EQ(static_cast<size_t>(buf[6] | (buf[7] << 8)), 2 + kFaultMaxTextLen);
+  CHECK(n <= kMaxFrameSize);
+}
+
+static void testFaultFrameHandlesEmptyText() {
+  CASE("Protokoll: Fehlerframe ohne Text bleibt gueltig");
+  uint8_t buf[kMaxFrameSize];
+  size_t n = writeFaultFrame(buf, 1, kFaultLidarPort, "");
+  CHECK_EQ(n, kHeaderSize + 2u);
+  CHECK_EQ(buf[kHeaderSize + 0], kFaultLidarPort);
+  CHECK_EQ(buf[kHeaderSize + 1], 0);
 }
 
 // --- Einfacher Scanmodus (C1) --------------------------------------------
@@ -681,6 +711,8 @@ int main(int argc, char **argv) {
   testStandardScanResync();
   testStandardScanSplitFeeds();
   testStandardScanRoundsQuarterMillimetres();
+  testFaultFrameCapsTheText();
+  testFaultFrameHandlesEmptyText();
   testWireFormat(fixture);
 
   std::printf("\n%d Pruefungen, %d Fehler\n", g_checks, g_failures);

@@ -1,10 +1,14 @@
-// Standalone-3D-Scanner: RPLIDAR S2 auf einer Gierachse, ESP32-S3.
+// Standalone-3D-Scanner: RPLIDAR (C1 oder S2) auf einer Gierachse, ESP32-S3.
 //
 // Ablauf: Client verbindet sich per TCP -> Achse faehrt auf den Endschalter
-// -> Sweep ueber 180 Grad mit konstanter Geschwindigkeit -> jede Dense-Capsule
-// wird mit dem passenden Gierwinkel versehen und gestreamt -> Achse faehrt
-// zurueck. 180 Grad genuegen fuer die volle Kugel, weil der LiDAR in seiner
-// Ebene bereits 360 Grad misst.
+// -> Sweep ueber 180 Grad, Schritt fuer Schritt -> jede Messgruppe wird mit
+// dem passenden Gierwinkel versehen und gestreamt -> Achse faehrt zurueck.
+// 180 Grad genuegen fuer die volle Kugel, weil der LiDAR in seiner Ebene
+// bereits 360 Grad misst.
+//
+// Das Netz kommt vor jeder Hardwarepruefung hoch: faellt der Hochlauf aus,
+// bleibt der Scanner erreichbar und meldet den Grund als FAULT-Frame, statt
+// stumm dazustehen.
 //
 // Zwei Tasks: der LiDAR-Task liest die UART und packt Frames, der Netz-Task
 // schiebt sie ins WLAN. Dazwischen eine Queue, damit ein WLAN-Aussetzer den
@@ -41,6 +45,11 @@ static volatile uint32_t g_capsules = 0;
 static volatile uint32_t g_dropped = 0;
 static volatile bool g_scanRunning = false;
 static uint16_t g_seq = 0;
+
+// Was beim Hochlauf fehlgeschlagen ist. Der Scanner laeuft trotzdem weiter,
+// bleibt im Netz erreichbar und schickt den Grund an jeden Client.
+static uint8_t g_faultCode = kFaultNone;
+static char g_faultText[kFaultMaxTextLen + 1] = "";
 
 // Ebenenerfassung: die Achse oeffnet das Fenster, aber gezaehlt wird erst ab
 // der ersten Umlaufmarke des LiDAR. Zwischen erster und zweiter Marke liegt
@@ -171,6 +180,12 @@ static void sendHello(WiFiClient &client) {
   client.write(buf, n);
 }
 
+static void sendFault(WiFiClient &client) {
+  uint8_t buf[kMaxFrameSize];
+  size_t n = writeFaultFrame(buf, g_seq++, g_faultCode, g_faultText);
+  client.write(buf, n);
+}
+
 static void sendStatus(WiFiClient &client) {
   uint8_t buf[kMaxFrameSize];
   size_t n = writeStatusFrame(buf, g_seq++, g_axis.sweepIndex(), g_axis.state(),
@@ -191,14 +206,16 @@ static void netTask(void *) {
     client.setNoDelay(true);
     Serial.printf("Client verbunden: %s\n", client.remoteIP().toString().c_str());
 
-    xQueueReset(g_queue);
+    if (g_queue != nullptr) xQueueReset(g_queue);
     g_capsules = 0;
     g_dropped = 0;
     sendHello(client);
+    if (g_faultCode != kFaultNone) sendFault(client);
     sendStatus(client);
 
 #if AUTO_START_ON_CONNECT
-    g_axis.startSweep();
+    // Ohne funktionierende Achse waeren alle Gierwinkel gelogen.
+    if (g_faultCode == kFaultNone) g_axis.startSweep();
 #endif
     SweepState lastState = g_axis.state();
     uint32_t lastStatusMs = millis();
@@ -208,7 +225,9 @@ static void netTask(void *) {
       while (client.available()) {
         int c = client.read();
         if (c == 'S') {
-          g_axis.startSweep();
+          // Bei gestoerter Achse den Grund erneut melden statt loszufahren.
+          if (g_faultCode != kFaultNone) sendFault(client);
+          else g_axis.startSweep();
         } else if (c == 'X') {
           g_axis.stop();
         }
@@ -224,7 +243,7 @@ static void netTask(void *) {
       // Frames buendeln: 800 Einzelschreibvorgaenge/s waeren Verschwendung.
       size_t used = 0;
       FrameMsg msg;
-      while (used + kMaxFrameSize <= sizeof(batch) &&
+      while (g_queue != nullptr && used + kMaxFrameSize <= sizeof(batch) &&
              xQueueReceive(g_queue, &msg, 0) == pdTRUE) {
         memcpy(batch + used, msg.bytes, msg.len);
         used += msg.len;
@@ -268,52 +287,28 @@ static void startWifi() {
 #endif
 }
 
+// Einen Hochlauffehler festhalten statt stehenzubleiben.
+static void setFault(uint8_t code, const char *text) {
+  if (g_faultCode != kFaultNone) return;  // der erste Fehler ist der Grund
+  g_faultCode = code;
+  snprintf(g_faultText, sizeof(g_faultText), "%s", text);
+  Serial.printf("FEHLER: %s\n", text);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\nlidar3d - RPLIDAR S2 auf Gierachse");
+  Serial.println("\nlidar3d - RPLIDAR auf Gierachse");
 
-  if (!g_axis.begin()) {
-    // Ohne Servo waeren alle Gierwinkel gelogen - lieber gar nicht scannen.
-    Serial.println("FEHLER: STS3215 antwortet nicht. Bus-ID, Baudrate (1 Mbaud), "
-                   "Halbduplex-Verdrahtung und 12-V-Versorgung pruefen.");
-    while (true) delay(1000);
-  }
-  Serial.printf("Gierachse: Servo-Modell %u, %u Ebenen a %.2f deg, "
-                "Encoderaufloesung %.4f deg\n",
-                g_axis.servoModel(), g_axis.planeCount(), YAW_PLANE_STEP_DEG,
-                360.0 / SERVO_COUNTS_PER_REV);
-
-  if (!g_lidar.begin(static_cast<uart_port_t>(LIDAR_UART_NUM), LIDAR_RX_PIN,
-                     LIDAR_TX_PIN, LIDAR_BAUDRATE, LIDAR_RX_BUFFER)) {
-    Serial.println("FEHLER: LiDAR-UART liess sich nicht oeffnen");
-    while (true) delay(1000);
-  }
-  g_lidar.setMotorRpm(LIDAR_RPM);
-  delay(1500);  // Anlauf des LiDAR-Motors abwarten
-
-  // Erst den einfachen Scanmodus versuchen - der C1 kann nur den, und beim S2
-  // scheitert er erst an der Bandbreite. Nur wenn er sich nicht starten
-  // laesst, auf die Dense-Capsules ausweichen.
-  if (g_lidar.startStandardScan()) {
-    Serial.println("LiDAR laeuft im einfachen Scanmodus (C1)");
-  } else {
-    int mode = g_lidar.startDenseScan();
-    if (mode < 0) {
-      Serial.println("FEHLER: Kein Scanmodus liess sich starten. Stromversorgung "
-                     "(5 V, >2 W) und Baudrate pruefen (C1: 460800, S2: 1 Mbaud).");
-      while (true) delay(1000);
-    }
-    Serial.printf("LiDAR laeuft mit Dense-Capsules, Scanmodus %d\n", mode);
-  }
-  g_scanRunning = true;
-
-  g_queue = xQueueCreate(FRAME_QUEUE_LENGTH, sizeof(FrameMsg));
-  if (g_queue == nullptr) {
-    Serial.println("FEHLER: Queue liess sich nicht anlegen");
-    while (true) delay(1000);
-  }
-
+  // Das Netz kommt zuerst, und zwar vor jeder Hardwarepruefung.
+  //
+  // Frueher stand es am Ende von setup(), hinter vier Stellen, die im
+  // Fehlerfall in einer Endlosschleife haengen blieben. Fehlte also nur der
+  // Servo, spannte der ESP32 nie ein WLAN auf und meldete sich nie am USB -
+  // von aussen sah das aus, als sei die Firmware gar nicht drauf. Wer den
+  // Grund wissen wollte, brauchte das serielle Kabel.
+  //
+  // Jetzt ist der Scanner immer erreichbar und sagt selbst, was fehlt.
   startWifi();
 
 #if ENABLE_USB_NCM
@@ -333,8 +328,62 @@ void setup() {
   }
 #endif
 
+  g_queue = xQueueCreate(FRAME_QUEUE_LENGTH, sizeof(FrameMsg));
+  if (g_queue == nullptr) {
+    setFault(kFaultQueue, "Speicher fuer die Frame-Queue reicht nicht");
+  }
+
+  if (!g_axis.begin()) {
+    // Ohne Servo waeren alle Gierwinkel gelogen - dann lieber nicht scannen.
+    setFault(kFaultServo,
+             "STS3215 antwortet nicht. Bus-ID, Baudrate (1 Mbaud), "
+             "Halbduplex und 12 V pruefen.");
+  } else {
+    Serial.printf("Gierachse: Servo-Modell %u, %u Ebenen a %.2f deg, "
+                  "Encoderaufloesung %.4f deg\n",
+                  g_axis.servoModel(), g_axis.planeCount(), YAW_PLANE_STEP_DEG,
+                  360.0 / SERVO_COUNTS_PER_REV);
+  }
+
+  if (g_faultCode == kFaultNone) {
+    if (!g_lidar.begin(static_cast<uart_port_t>(LIDAR_UART_NUM), LIDAR_RX_PIN,
+                       LIDAR_TX_PIN, LIDAR_BAUDRATE, LIDAR_RX_BUFFER)) {
+      setFault(kFaultLidarPort, "LiDAR-UART liess sich nicht oeffnen");
+    } else {
+      g_lidar.setMotorRpm(LIDAR_RPM);
+      delay(1500);  // Anlauf des LiDAR-Motors abwarten
+
+      // Erst den einfachen Scanmodus versuchen - der C1 kann nur den, und beim
+      // S2 scheitert er erst an der Bandbreite. Nur wenn er sich nicht starten
+      // laesst, auf die Dense-Capsules ausweichen.
+      if (g_lidar.startStandardScan()) {
+        Serial.println("LiDAR laeuft im einfachen Scanmodus (C1)");
+        g_scanRunning = true;
+      } else {
+        int mode = g_lidar.startDenseScan();
+        if (mode < 0) {
+          setFault(kFaultLidarScan,
+                   "Kein Scanmodus startbar. Versorgung (5 V, >2 W) und "
+                   "Baudrate pruefen (C1 460800, S2 1 Mbaud).");
+        } else {
+          Serial.printf("LiDAR laeuft mit Dense-Capsules, Scanmodus %d\n", mode);
+          g_scanRunning = true;
+        }
+      }
+    }
+  }
+
+  if (g_faultCode != kFaultNone) {
+    Serial.println("Der Scanner bleibt im Netz erreichbar und meldet den Grund. "
+                   "Nach dem Beheben neu starten.");
+  }
+
   // LiDAR auf Core 1, Netz auf Core 0 (dort laeuft auch der WLAN-Stack).
-  xTaskCreatePinnedToCore(lidarTask, "lidar", 4096, nullptr, 5, nullptr, 1);
+  // Der Netz-Task laeuft auch im Fehlerfall - er ist der einzige Weg, den
+  // Grund ohne serielles Kabel zu erfahren.
+  if (g_queue != nullptr) {
+    xTaskCreatePinnedToCore(lidarTask, "lidar", 4096, nullptr, 5, nullptr, 1);
+  }
   xTaskCreatePinnedToCore(netTask, "net", 6144, nullptr, 4, nullptr, 0);
 }
 

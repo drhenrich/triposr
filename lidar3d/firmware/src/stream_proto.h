@@ -19,6 +19,17 @@ enum FrameType : uint8_t {
   kFrameCapsule = 1,  // S2: 40 Messungen auf gleichmaessigem Winkelraster
   kFrameStatus = 2,
   kFrameScan = 3,     // C1: Messungen mit eigenem Winkel je Stueck
+  kFrameFault = 4,    // Hochlauf misslungen, mit Klartext
+};
+
+// Was beim Hochlauf schiefgehen kann. Der Scanner bleibt trotzdem im Netz
+// erreichbar und meldet den Grund - sonst sucht man ihn am seriellen Kabel.
+enum FaultCode : uint8_t {
+  kFaultNone = 0,
+  kFaultServo = 1,       // STS3215 antwortet nicht
+  kFaultLidarPort = 2,   // UART zum LiDAR liess sich nicht oeffnen
+  kFaultLidarScan = 3,   // kein Scanmodus liess sich starten
+  kFaultQueue = 4,       // Speicher fuer die Frame-Queue fehlt
 };
 
 enum FrameFlags : uint8_t {
@@ -50,6 +61,10 @@ static const size_t kScanSampleSize = 4;
 static const size_t kScanMaxPayloadSize =
     kScanHeadSize + kScanSampleSize * kScanMaxSamples;  // 140
 static const size_t kScanMaxFrameSize = kHeaderSize + kScanMaxPayloadSize;  // 148
+
+// Fehlerframe: Code plus Klartext, damit die App sagen kann, was fehlt.
+static const size_t kFaultMaxTextLen = 96;
+static const size_t kFaultMaxPayloadSize = 2 + kFaultMaxTextLen;
 
 static const size_t kMaxFrameSize =
     kCapsuleFrameSize > kScanMaxFrameSize ? kCapsuleFrameSize : kScanMaxFrameSize;
@@ -116,6 +131,21 @@ inline size_t writeScanFrame(uint8_t *out, uint16_t seq, uint8_t flags,
     detail::put16(p + kScanHeadSize + kScanSampleSize * i, samples[i].angleQ6);
     detail::put16(p + kScanHeadSize + kScanSampleSize * i + 2, samples[i].distanceMm);
   }
+  return kHeaderSize + payloadLen;
+}
+
+// Grund fuer einen misslungenen Hochlauf. Wird nach HELLO geschickt, solange
+// der Fehler besteht.
+inline size_t writeFaultFrame(uint8_t *out, uint16_t seq, uint8_t code,
+                              const char *text) {
+  size_t len = 0;
+  while (text != nullptr && text[len] != '\0' && len < kFaultMaxTextLen) ++len;
+  const size_t payloadLen = 2 + len;
+  writeHeader(out, kFrameFault, 0, seq, static_cast<uint16_t>(payloadLen));
+  uint8_t *p = out + kHeaderSize;
+  p[0] = code;
+  p[1] = static_cast<uint8_t>(len);
+  memcpy(p + 2, text, len);
   return kHeaderSize + payloadLen;
 }
 
