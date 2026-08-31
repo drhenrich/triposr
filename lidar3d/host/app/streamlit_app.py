@@ -231,6 +231,16 @@ if "planes" not in st.session_state:
 if "rows" not in st.session_state:
     st.session_state.rows = []        # Rohzeilen fuer den CSV-Export
 
+# Den Gierwinkel weiterzaehlen darf nur *vor* dem Widget passieren: Streamlit
+# verbietet, den Zustand eines Widget-Keys zu aendern, nachdem das Widget im
+# selben Durchlauf erzeugt wurde. Das Aufnehmen merkt den naechsten Wert
+# deshalb nur vor und loest einen Neulauf aus; angewendet wird er hier.
+if "yaw_deg" not in st.session_state:
+    # Ohne das startet number_input bei min_value, also bei -360.
+    st.session_state.yaw_deg = 0.0
+if "_pending_yaw" in st.session_state:
+    st.session_state.yaw_deg = st.session_state.pop("_pending_yaw")
+
 with tab_3d:
     st.markdown(
         "Ablauf wie bei der Firmware, nur von Hand: Achse auf einen Gierwinkel "
@@ -280,8 +290,8 @@ with tab_3d:
             added += 1
         st.session_state.planes.append((yaw, added))
         if advance:
-            # Wert des Widgets fuer den naechsten Durchlauf setzen.
-            st.session_state.yaw_deg = min(360.0, yaw + yaw_step)
+            # Nur vormerken - gesetzt wird oben, vor dem Widget.
+            st.session_state._pending_yaw = min(360.0, yaw + yaw_step)
         st.rerun()
 
     with right:

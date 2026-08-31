@@ -130,7 +130,7 @@ ios/               iPhone-App mit Echtzeit-3D
 host/              Python, nur Standardbibliothek im Kern
   scan3d/           Dekoder (C1 und S2), Geometrie, PLY-Export, CLI, Leser
   app/              Streamlit-Oberflaeche: Live 2D, 3D aufnehmen, Diagnose
-  tests/            91 Tests
+  tests/            97 Tests
 tests/wire_fixture.txt  gemeinsame Byte-Fixture aller drei Protokollseiten
 docs/              Hardware, Geometrie/Kalibrierung, Protokolle, iOS/USB-C
 ```
@@ -187,7 +187,7 @@ Sobald sich ein Client verbindet, fährt die Achse einen Sweep.
 ## Tests
 
 ```bash
-cd lidar3d/host && python3 -m unittest discover -s tests -t .   # 91 Tests
+cd lidar3d/host && python3 -m unittest discover -s tests -t .   # 97 Tests
 make -C lidar3d/firmware/test/native                           # 129 Prüfungen
 cd lidar3d/ios/LidarKit && swift test                          # nur auf dem Mac
 ```

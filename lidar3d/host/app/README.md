@@ -78,6 +78,13 @@ beim Umrechnen ein.
 
 ## Aufbau
 
+Die App wird im Test einmal komplett durchlaufen — gegen eine Attrappe
+(`tests/fake_streamlit.py`), die Streamlits Zustandsregeln nachbildet,
+insbesondere: *ein Widget-Key darf nicht mehr verändert werden, nachdem das
+Widget im selben Durchlauf erzeugt wurde*. Genau daran ist die
+Winkel-Weiterschaltung einmal gescheitert; `tests/test_streamlit_app.py` hält
+das jetzt fest.
+
 Die Oberfläche ist reine Darstellung. Das Lesen läuft in einem eigenen Thread
 (`scan3d/reader.py`), damit Streamlit bei jedem Neulauf des Skripts nicht auf
 die serielle Schnittstelle warten muss; der Leser hängt an `st.cache_resource`
