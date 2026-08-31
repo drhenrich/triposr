@@ -54,13 +54,26 @@
 //
 // Werkseinstellung ab Werk: ID 1, 1 MBaud. Beides unten so eingetragen.
 //
-// Halbduplex-TTL-Bus. Liegt SERVO_DIR_PIN >= 0, schaltet der ESP32 die
-// Richtung selbst (RS485-Halbduplexmodus, blendet das eigene Echo aus);
-// auf -1 setzen, wenn ein Adapterboard wie das FE-URT-1 das uebernimmt.
+// Halbduplex-TTL-Bus: Senden und Empfangen teilen sich eine Leitung.
+//
+// SERVO_DIR_PIN >= 0  der ESP32 schaltet die Richtung selbst ueber diesen Pin
+//                     (RS485-Halbduplexmodus des UART-Treibers). Nur mit einem
+//                     Transceiver, der einen DE/RE-Eingang hat.
+// SERVO_DIR_PIN -1    das Adapterboard schaltet selbst - so beim FE-URT-1,
+//                     der dafuer keinen Steuereingang hat -, oder der Bus
+//                     haengt ueber einen Widerstand direkt an TX und RX.
+//
+// Im zweiten Fall hoert der ESP32 sein eigenes Gesendetes mit. Das ist kein
+// Problem mehr: der EchoFilter in feetech_bus.h wirft es weg. Ohne ihn hielt
+// der Parser das Echo fuer eine Antwort - ein Kommando ist genauso gerahmt
+// wie eine - und ping() meldete Erfolg an einem Bus ganz ohne Servo.
+//
+// Voreingestellt ist -1, weil das fuer FE-URT-1 und Widerstand gilt und
+// beides ohne Zusatzbauteil auskommt.
 #define SERVO_UART_NUM 2
 #define SERVO_RX_PIN 16
 #define SERVO_TX_PIN 15
-#define SERVO_DIR_PIN 7
+#define SERVO_DIR_PIN -1
 #define SERVO_BAUDRATE 1000000
 #define SERVO_ID 1
 

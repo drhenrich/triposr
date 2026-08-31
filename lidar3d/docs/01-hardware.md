@@ -125,13 +125,46 @@ diesen einen Draht. Genau daran hängt die ganze Verdrahtungsfrage.
 
 Bus-Baudrate 1 MBaud, Servo-ID 1 (Werkseinstellung).
 
-#### Die Signalleitung: zwei Wege
+#### Die Signalleitung: drei Wege
 
-**a) Mit Adapter oder Transceiver** — `SERVO_DIR_PIN 7` in `config.h`.
+**a) Feetech FE-URT-1** — `SERVO_DIR_PIN -1` in `config.h`.
 
-Der Feetech **FE-URT-1** oder ein Transceiver mit DE/RE-Eingang. Die Firmware
-setzt die UART in den RS485-Halbduplexmodus; der ESP32 schaltet die Richtung
-selbst, und das eigene Echo landet gar nicht erst im Puffer.
+Das Board hat neben der USB-Buchse einen **TTL-Stiftleiste** für genau diesen
+Fall. Wichtig: es schaltet die Richtung **selbst** um, „hardware circuit
+automatic diversion, without needing additional IO enable to control" —
+es gibt also *keinen* DE/RE-Eingang, und GPIO 7 bleibt frei.
+
+```
+ESP32 GPIO 15 (TX) ──► RXD  ┐
+ESP32 GPIO 16 (RX) ◄── TXD  ├─ TTL-Stiftleiste des FE-URT-1
+ESP32 GND          ──── GND ┘
+```
+
+Der STS3215 ist ein **Drei-Draht-TTL-Servo** (GND, 12 V, Signal) und gehört
+an den **TTL-Port** des Boards, nicht an den RS485-Port — der ist für
+Vier-Draht-Servos mit A/B.
+
+Drei Dinge, die leicht schiefgehen:
+
+* **Pegel auf 3,3 V stellen.** Das Board kann 5 V oder 3,3 V; der ESP32
+  verträgt an seinen Eingängen keine 5 V.
+* **Nicht gleichzeitig USB und ESP32 anstecken.** Dann treiben zwei Sender
+  dieselben TTL-Leitungen.
+* **Ob das Board das eigene Echo durchlässt, ist offen** — automatische
+  Richtungsumschaltung heißt nicht zwingend, dass die Empfangsleitung
+  währenddessen stummgeschaltet wird. Der Firmware ist das inzwischen egal:
+  sie wirft ein Echo weg, wenn eines kommt (siehe unten).
+
+Der USB-Anschluss bleibt trotzdem nützlich: **erst am PC prüfen**, ob der
+Servo überhaupt antwortet und welche ID und Baudrate er hat, bevor er an den
+ESP32 kommt. Das trennt „Servo kaputt oder falsch eingestellt" sauber von
+„falsch verdrahtet".
+
+**b) Transceiver mit DE/RE-Eingang** — `SERVO_DIR_PIN 7`.
+
+Die Firmware setzt die UART dann in den RS485-Halbduplexmodus; der ESP32
+schaltet die Richtung selbst, und das eigene Echo landet gar nicht erst im
+Puffer.
 
 ```
 ESP32 GPIO 15 (TX) ──► DI
@@ -139,10 +172,7 @@ ESP32 GPIO 16 (RX) ◄── RO      Transceiver ──► Signalleitung des Ser
 ESP32 GPIO  7      ──► DE/RE
 ```
 
-Nutzt du ein Adapterboard, das die Richtung selbst umschaltet,
-`SERVO_DIR_PIN` auf `-1` setzen.
-
-**b) Ohne alles — nur ein Widerstand.**
+**c) Ohne alles — nur ein Widerstand.** `SERVO_DIR_PIN -1`.
 
 Geht auch, und für den Anfang reicht es:
 
@@ -163,7 +193,8 @@ gleicht. Ohne diesen Filter meldete `ping()` Erfolg an einem Bus *ohne* Servo,
 und `readModel()` lieferte die Registeradresse aus dem eigenen Kommando statt
 der Modellnummer.
 
-Für `SERVO_DIR_PIN` gilt dann `-1`.
+Das gilt für Weg **a** und **c** gleichermaßen: beide lassen das Echo
+möglicherweise durch, und der Filter macht beide sicher.
 
 #### Bevor du einschaltest
 
