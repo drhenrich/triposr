@@ -18,6 +18,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import struct
 import sys
 from typing import List, Optional, Tuple
@@ -189,9 +190,12 @@ TEMPLATE = r"""<title>__TITLE__</title>
     padding: 14px 18px 16px;
     border-left: 2px solid var(--stripe, var(--muted));
   }
-  #finding[data-level="kritisch"]  { --stripe: var(--warn); }
-  #finding[data-level="auffällig"] { --stripe: var(--accent); }
-  #finding[data-level="plausibel"] { --stripe: var(--ok); }
+  /* Der Wert ist ein ASCII-Schluessel, kein Anzeigetext: in <style> werden
+     Zeichenreferenzen nicht aufgeloest, ein Umlaut im Selektor wuerde also
+     nicht mehr treffen, sobald die Seite nach ASCII maskiert wird. */
+  #finding[data-level="kritisch"]   { --stripe: var(--warn); }
+  #finding[data-level="auffaellig"] { --stripe: var(--accent); }
+  #finding[data-level="plausibel"]  { --stripe: var(--ok); }
 
   #finding .level {
     font-family: var(--mono);
@@ -301,7 +305,7 @@ TEMPLATE = r"""<title>__TITLE__</title>
   <dl class="readout" id="readout"></dl>
 </div>
 
-<div class="panel" id="finding" data-level="__LEVEL__">
+<div class="panel" id="finding" data-level="__LEVEL_KEY__">
   <div class="level">Befund · __LEVEL__</div>
   <h2>__VERDICT_TITLE__</h2>
   <p>__VERDICT_TEXT__</p>
@@ -540,20 +544,60 @@ requestAnimationFrame(frame);
 """
 
 
+def to_ascii(html: str) -> str:
+    """Alle Zeichen jenseits von ASCII maskieren.
+
+    Notwendig, weil sich die Seite nicht darauf verlassen kann, dass ihre
+    Zeichensatzangabe gelesen wird: beim Veroeffentlichen als Artifact wird ein
+    Vorspann eingesetzt, wodurch das <meta charset> erst bei Byte 13000 steht.
+    Browser suchen es aber nur in den ersten 1024 Byte und fallen sonst auf
+    windows-1252 zurueck - aus "Zuruecksetzen" wird dann "ZurÃ¼cksetzen".
+
+    Im Markup gehen dafuer Zeichenreferenzen, in <script> nicht: dort werden sie
+    nicht aufgeloest und muessten als \\uXXXX in den Zeichenketten stehen.
+    Deshalb wird der Text stueckweise behandelt.
+    """
+    out = []
+    for index, part in enumerate(re.split(r"(<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>)", html,
+                                          flags=re.DOTALL | re.IGNORECASE)):
+        if index % 2 == 1:  # ein <script>- oder <style>-Block
+            if part.lstrip()[:6].lower() == "<style":
+                # In CSS gaebe es zwar \NN-Escapes, aber die Regeln zu Trennung
+                # und Gross-/Kleinschreibung sind heikel. Der Stil hier ist
+                # unser eigener und soll schlicht ASCII bleiben.
+                stray = sorted({c for c in part if ord(c) >= 128})
+                if stray:
+                    raise ValueError(
+                        "nicht-ASCII im <style>: " + " ".join(stray) +
+                        " - im Stylesheet wirken weder Zeichenreferenzen noch "
+                        "\\uXXXX; bitte umschreiben")
+                out.append(part)
+                continue
+            out.append("".join(c if ord(c) < 128 else f"\\u{ord(c):04x}"
+                               for c in part))
+        else:
+            out.append("".join(c if ord(c) < 128 else f"&#{ord(c)};"
+                               for c in part))
+    return "".join(out)
+
+
 def build(points: List[Point], label: str, info: dict) -> str:
     flat = struct.pack(f"<{len(points) * 3}f",
                        *[c for p in points for c in p])
     level, title, text = verdict(info)
 
-    return (TEMPLATE
+    page = (TEMPLATE
             .replace("__TITLE__", f"LiDAR-Scan {label}")
             .replace("__EYEBROW__", "Punktwolke · Handdrehung")
             .replace("__HEADLINE__", f"Scan {label}")
+            .replace("__LEVEL_KEY__", level.replace("ä", "ae"))
             .replace("__LEVEL__", level)
             .replace("__VERDICT_TITLE__", title)
             .replace("__VERDICT_TEXT__", text)
+            # json.dumps maskiert selbst schon nach ASCII.
             .replace("__INFO__", json.dumps(info))
             .replace("__DATA__", base64.b64encode(flat).decode("ascii")))
+    return to_ascii(page)
 
 
 def main(argv: Optional[List[str]] = None) -> int:

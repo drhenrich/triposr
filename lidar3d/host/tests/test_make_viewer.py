@@ -169,10 +169,55 @@ class TestBuild(unittest.TestCase):
         for a, b in zip(first, points[0]):
             self.assertAlmostEqual(a, b, places=5)
 
+    def test_page_is_pure_ascii(self):
+        """Sonst zerlegt es die Umlaute.
+
+        Beim Veroeffentlichen als Artifact bekommt die Seite einen Vorspann,
+        der das <meta charset> weit hinter die ersten 1024 Byte schiebt - dort
+        sucht der Browser es aber nur, und faellt sonst auf windows-1252
+        zurueck. Die Seite darf sich deshalb nicht darauf verlassen.
+        """
+        points = room_cloud(planes=6, per_plane=60)
+        html = make_viewer.build(points, "T", analyse(points))
+        offending = [(i, c) for i, c in enumerate(html) if ord(c) >= 128]
+        self.assertEqual(offending, [], "die Seite muss reines ASCII sein")
+
+    def test_umlauts_survive_as_escapes(self):
+        """Maskiert, aber nicht verloren - im Markup anders als im Skript."""
+        points = room_cloud(planes=6, per_plane=60)
+        html = make_viewer.build(points, "T", analyse(points))
+        self.assertIn("Zur&#252;cksetzen", html)   # Zeichenreferenz im Markup
+        self.assertIn("\\u00b0", html)             # Gradzeichen im <script>
+        self.assertNotIn("&#252;cksetzen", html.split("<script")[-1])
+
+    def test_to_ascii_leaves_plain_text_alone(self):
+        self.assertEqual(make_viewer.to_ascii("<p>hallo</p>"), "<p>hallo</p>")
+
+    def test_to_ascii_uses_the_right_escape_per_context(self):
+        page = "<p>grün</p><script>var s = \"grün\";</script>"
+        self.assertEqual(
+            make_viewer.to_ascii(page),
+            "<p>gr&#252;n</p><script>var s = \"gr\\u00fcn\";</script>")
+
     def test_page_carries_the_verdict(self):
         points = revolution_cloud(planes=8, per_plane=60)
         html = make_viewer.build(points, "T", analyse(points))
         self.assertIn('data-level="kritisch"', html)
+
+    def test_level_key_stays_ascii_so_the_css_selector_matches(self):
+        """Im <style> wirken keine Zeichenreferenzen - der Schluessel muss also
+        ohne Umlaut auskommen, sonst faerbt sich der Streifen nicht."""
+        for level in ("kritisch", "auffaellig", "plausibel"):
+            self.assertIn(f'#finding[data-level="{level}"]', make_viewer.TEMPLATE)
+
+    def test_to_ascii_refuses_non_ascii_in_the_stylesheet(self):
+        with self.assertRaises(ValueError):
+            make_viewer.to_ascii("<style>a::after{content:'grün'}</style>")
+
+    def test_to_ascii_keeps_the_stylesheet_untouched(self):
+        page = "<style>a{color:red}</style><p>grün</p>"
+        self.assertEqual(make_viewer.to_ascii(page),
+                         "<style>a{color:red}</style><p>gr&#252;n</p>")
 
 
 if __name__ == "__main__":
