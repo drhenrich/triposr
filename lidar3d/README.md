@@ -137,14 +137,25 @@ docs/              Hardware, Geometrie/Kalibrierung, Protokolle, iOS/USB-C
 
 ## Loslegen
 
+> **Achtung:** Das Projekt liegt auf dem Branch
+> `claude/rplidar-s2-robot-q5c9aq`, nicht auf `main`. Auf `main` gibt es den
+> Ordner `lidar3d/` nicht.
+>
+> ```bash
+> git fetch origin
+> git checkout claude/rplidar-s2-robot-q5c9aq
+> ```
+
 **Der C1 am USB — mit Oberfläche.** Das ist der schnellste Weg zu sichtbaren
-Daten:
+Daten. Alle Pfade hier vom **Wurzelverzeichnis des Repos** aus:
 
 ```bash
-cd host
-pip install -r requirements-app.txt
-streamlit run app/streamlit_app.py
+pip install -r lidar3d/host/requirements-app.txt
+streamlit run lidar3d/host/app/streamlit_app.py
 ```
+
+Die App setzt ihren Suchpfad selbst — sie läuft aus jedem Verzeichnis, solange
+der Pfad zur Datei stimmt.
 
 Startet mit simuliertem Raum, läuft also sofort auch ohne Hardware. In der
 Seitenleiste umschalten, sobald der C1 dranhängt (Port, 460800 Baud). Details in
@@ -153,6 +164,7 @@ Seitenleiste umschalten, sobald der C1 dranhängt (Port, 460800 Baud). Details i
 **Ohne Oberfläche, nur Kommandozeile:**
 
 ```bash
+cd lidar3d/host
 python3 -m scan3d simulate --step 1 --color -o test.ply     # ohne Hardware
 python3 -m scan3d serial /dev/ttyUSB0 --duration 20 -o scan.ply
 ```
@@ -163,7 +175,7 @@ für den S2 `--baudrate 1000000 --mode dense`.
 **Vollständiger Aufbau:**
 
 ```bash
-cd firmware && pio run -e usb -t upload    # mit USB-C; -e wifi baut nur WLAN
+cd lidar3d/firmware && pio run -e usb -t upload   # mit USB-C; -e wifi nur WLAN
 cd ../host && python3 -m scan3d capture 192.168.7.1 --color -o scan.ply
 ```
 
@@ -175,9 +187,9 @@ Sobald sich ein Client verbindet, fährt die Achse einen Sweep.
 ## Tests
 
 ```bash
-cd host && python3 -m unittest discover -s tests -t .   # 91 Tests
-make -C firmware/test/native                            # 129 Prüfungen
-cd ios/LidarKit && swift test                           # nur auf dem Mac
+cd lidar3d/host && python3 -m unittest discover -s tests -t .   # 91 Tests
+make -C lidar3d/firmware/test/native                           # 129 Prüfungen
+cd lidar3d/ios/LidarKit && swift test                          # nur auf dem Mac
 ```
 
 Alle drei Implementierungen des Protokolls — Python, C++ und Swift — prüfen

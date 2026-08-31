@@ -2,11 +2,26 @@
 
 Live-Darstellung des RPLIDAR C1 am USB-Adapter, plus manuelle 3D-Aufnahme.
 
+Das Projekt liegt auf dem Branch `claude/rplidar-s2-robot-q5c9aq` — auf `main`
+gibt es den Ordner `lidar3d/` nicht.
+
+Vom Wurzelverzeichnis des Repos aus:
+
 ```bash
-cd host
+git checkout claude/rplidar-s2-robot-q5c9aq
+pip install -r lidar3d/host/requirements-app.txt
+streamlit run lidar3d/host/app/streamlit_app.py
+```
+
+Oder aus `lidar3d/host/` heraus:
+
+```bash
 pip install -r requirements-app.txt
 streamlit run app/streamlit_app.py
 ```
+
+Beides geht: die App legt ihren eigenen Suchpfad an und ist damit unabhaengig
+vom Arbeitsverzeichnis.
 
 Startet mit **simuliertem Raum** — die App läuft also sofort, auch ohne
 angeschlossene Hardware. In der Seitenleiste umschalten, sobald der C1 dranhängt.
