@@ -114,6 +114,20 @@ class TestAppRuns(unittest.TestCase):
         # Gleiche Achsenmasstaebe, sonst ist der Raum verzerrt.
         self.assertEqual(figures3d[0].layout["scene"]["aspectmode"], "data")
 
+    def test_live_mode_refreshes_fragments_not_the_whole_page(self):
+        """Der Fehler beim Benutzer: die Reiterleiste stand zweimal auf der
+        Seite. Ursache war der Neulauf des ganzen Skripts dreimal je Sekunde.
+        Im Live-Betrieb darf es deshalb keinen Seiten-Neulauf mehr geben."""
+        live = FakeStreamlit()          # "Live aktualisieren" bleibt an
+        run_app(live)
+        self.assertEqual(live.rerun_count, 0,
+                         "die ganze Seite darf nicht neu laufen")
+        self.assertGreaterEqual(live.fragments, 2,
+                                "Kopfzeile und Live-2D sollen Fragmente sein")
+        kinds = [k for f in live.figures for k in f.kinds()]
+        self.assertEqual(kinds.count("scattergl"), 1)
+        self.assertEqual(kinds.count("scatter3d"), 1)
+
     def test_every_chart_is_drawn_exactly_once(self):
         """Gegenprobe zur Frage, ob etwas doppelt erscheint."""
         run_app(self.st)

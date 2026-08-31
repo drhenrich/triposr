@@ -73,6 +73,7 @@ class FakeStreamlit:
         self.rerun_count = 0
         self.charts = 0
         self.figures: List[Any] = []
+        self.fragments = 0
         self.sidebar = self  # dieselbe Oberflaeche, das genuegt hier
 
     def begin_run(self) -> None:
@@ -171,6 +172,15 @@ class FakeStreamlit:
         return self._widget(label, key, options[index] if options else None)
 
     # -- Sonstiges ---------------------------------------------------------
+
+    def fragment(self, func: Optional[Callable] = None, run_every=None, **kw):
+        """Im Test einfach durchreichen - der Rumpf soll ganz normal laufen."""
+        self.fragments += 1
+
+        def decorate(fn):
+            return fn
+
+        return decorate if func is None else decorate(func)
 
     def rerun(self):
         self.rerun_count += 1

@@ -138,6 +138,20 @@ stats = reader.stats()
 revolution = reader.latest()
 
 
+# Nur den Live-Teil auffrischen statt der ganzen Seite. Ein Neulauf des
+# gesamten Skripts dreimal je Sekunde baut auch Reiter und Bedienelemente neu
+# auf; wenn sich dabei die Struktur aendert, zeichnet Streamlit sie ein zweites
+# Mal, statt sie zu ersetzen - dann steht die Reiterleiste doppelt auf der
+# Seite. Fragmente frischen nur ihren eigenen Bereich auf.
+HAS_FRAGMENT = hasattr(st, "fragment")
+
+
+def live_region(func):
+    if HAS_FRAGMENT and live:
+        return st.fragment(run_every=refresh_s)(func)
+    return func
+
+
 def keep(sample: rplidar.Sample) -> bool:
     return (sample.distance_mm > 0
             and sample.distance_mm >= min_range_mm
@@ -149,18 +163,26 @@ def keep(sample: rplidar.Sample) -> bool:
 # Kopfzeile
 # ---------------------------------------------------------------------------
 
-if stats.error:
-    st.error(f"**Leser gestoppt:** {stats.error}")
-elif not reader.running:
-    st.warning("Der Leser laeuft nicht. Bitte auf 'Neu verbinden' druecken.")
+@live_region
+def header_metrics():
+    live_stats = reader.stats()
+    current = reader.latest()
 
-cols = st.columns(5)
-cols[0].metric("Umdrehungen", f"{stats.revolutions}")
-cols[1].metric("Umdrehungen/s", f"{stats.rate_hz:.1f}")
-cols[2].metric("Punkte je Umdrehung", f"{len(revolution) if revolution else 0}")
-valid_share = (100.0 * stats.valid / stats.samples) if stats.samples else 0.0
-cols[3].metric("Gueltige Messungen", f"{valid_share:.0f} %")
-cols[4].metric("Resyncs", f"{stats.resyncs}")
+    if live_stats.error:
+        st.error(f"**Leser gestoppt:** {live_stats.error}")
+    elif not reader.running:
+        st.warning("Der Leser laeuft nicht. Bitte auf 'Neu verbinden' druecken.")
+
+    cols = st.columns(5)
+    cols[0].metric("Umdrehungen", f"{live_stats.revolutions}")
+    cols[1].metric("Umdrehungen/s", f"{live_stats.rate_hz:.1f}")
+    cols[2].metric("Punkte je Umdrehung", f"{len(current) if current else 0}")
+    share = (100.0 * live_stats.valid / live_stats.samples) if live_stats.samples else 0.0
+    cols[3].metric("Gueltige Messungen", f"{share:.0f} %")
+    cols[4].metric("Resyncs", f"{live_stats.resyncs}")
+
+
+header_metrics()
 
 tab_live, tab_3d, tab_diag = st.tabs(["Live 2D", "3D aufnehmen", "Diagnose"])
 
@@ -169,7 +191,9 @@ tab_live, tab_3d, tab_diag = st.tabs(["Live 2D", "3D aufnehmen", "Diagnose"])
 # Live 2D
 # ---------------------------------------------------------------------------
 
-with tab_live:
+@live_region
+def live_plot():
+    revolution = reader.latest()
     if not revolution:
         st.info("Warte auf die erste vollstaendige Umdrehung …")
     else:
@@ -220,6 +244,10 @@ with tab_live:
                 f"{ring_step} m. Weiteste Messung {max(dist):.2f} m.")
 
 
+with tab_live:
+    live_plot()
+
+
 # ---------------------------------------------------------------------------
 # 3D aufnehmen
 # ---------------------------------------------------------------------------
@@ -241,6 +269,9 @@ if "yaw_deg" not in st.session_state:
 if "_pending_yaw" in st.session_state:
     st.session_state.yaw_deg = st.session_state.pop("_pending_yaw")
 with tab_3d:
+    # Frisch holen: die Aufnahme soll die zuletzt gemessene Ebene nehmen,
+    # nicht die vom letzten vollstaendigen Seitenaufbau.
+    revolution = reader.latest()
     cloud = st.session_state.cloud
     planes = st.session_state.planes
 
@@ -421,6 +452,7 @@ der einfache Scanmodus genügt, ein Express-Modus wird nicht gebraucht.
 # Live-Schleife
 # ---------------------------------------------------------------------------
 
-if live and reader.running and not stats.error:
+if live and reader.running and not stats.error and not HAS_FRAGMENT:
+    # Nur fuer aeltere Streamlit-Versionen ohne st.fragment.
     time.sleep(refresh_s)
     st.rerun()
