@@ -210,12 +210,20 @@ LiDAR-Dekoder, die Winkelinterpolation, das Feetech-Busprotokoll, die
 Ebenenaufteilung, die Encoderumrechnung, die Geometrie und das Frameprotokoll
 (Python und C++, byteweise gegeneinander).
 
-**Nicht kompiliert** — in dieser Umgebung fehlten die Toolchains:
+**Übersetzt und gebunden**, aber ohne echte Toolchain:
+`firmware/src/main.cpp`, `rplidar.cpp`, `feetech_servo.cpp` und
+`yaw_axis.cpp` bauen gegen Attrappen der Arduino- und IDF-APIs
+(`make -C firmware/test/compile`). Das findet Tippfehler, falsche Signaturen
+und nicht definierte Symbole — nicht aber Laufzeitverhalten, Register oder
+Timing. Details und was der Test nachweislich fängt:
+`firmware/test/compile/README.md`.
 
-| Teil | warum ungeprüft |
+**Weiterhin ungeprüft:**
+
+| Teil | warum |
 |---|---|
-| `firmware/src/rplidar.cpp`, `feetech_servo.cpp`, `yaw_axis.cpp`, `main.cpp` | keine PlatformIO-Toolchain |
-| `firmware/src/usb_ncm.cpp` und der IDF-Build (`env:usb`) | dito; zusätzlich hat sich die `esp_tinyusb`-API zwischen IDF-Versionen mehrfach geändert — vor dem Flashen gegen das Beispiel `tusb_ncm` der eigenen Version abgleichen |
+| der echte Firmware-Build (`pio run`) | keine PlatformIO-Toolchain; die Netzpolitik dieser Umgebung sperrt `api.registry.platformio.org` |
+| `firmware/src/usb_ncm.cpp` und der IDF-Build (`env:usb`) | die `esp_tinyusb`-API hat sich zwischen IDF-Versionen mehrfach geändert — vor dem Flashen gegen das Beispiel `tusb_ncm` der eigenen Version abgleichen |
 | `ios/` (alles) | kein Swift, kein Xcode |
 
 Die Swift-Seite bringt aber eigene Tests mit: ein `swift test` auf dem Mac
