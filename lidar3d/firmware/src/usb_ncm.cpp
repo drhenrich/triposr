@@ -10,6 +10,21 @@
 
 #include "usb_ncm.h"
 
+#include "../include/config.h"
+
+#if !ENABLE_USB_NCM
+
+// Ohne ESP-IDF gibt es kein esp_tinyusb. Damit main.cpp trotzdem bindet,
+// bleiben hier Rumpffunktionen: usbNcmStart() meldet schlicht, dass es
+// nichts gibt, und main.cpp faehrt mit WLAN allein weiter.
+namespace nwl {
+bool usbNcmStart() { return false; }
+void usbNcmSetLinkUp(bool) {}
+bool usbNcmHostPresent() { return false; }
+}  // namespace nwl
+
+#else
+
 #include <esp_check.h>
 #include <esp_log.h>
 #include <esp_mac.h>
@@ -144,3 +159,5 @@ void usbNcmSetLinkUp(bool up) {
 bool usbNcmHostPresent() { return g_hostPresent; }
 
 }  // namespace nwl
+
+#endif  // ENABLE_USB_NCM

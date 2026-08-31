@@ -31,14 +31,6 @@ esp_err_t uart_wait_tx_done(uart_port_t, TickType_t) { return ESP_OK; }
 int uart_write_bytes(uart_port_t, const char *, size_t n) { return static_cast<int>(n); }
 int uart_read_bytes(uart_port_t, uint8_t *, uint32_t, TickType_t) { return 0; }
 
-// Der USB-NCM-Teil haengt an esp_tinyusb und wird hier nicht mituebersetzt;
-// fuer den Uebersetzungstest von main.cpp genuegen diese beiden. Die
-// Signaturen kommen aus usb_ncm.h - stimmen sie nicht, meldet der Binder es.
-namespace nwl {
-bool usbNcmStart() { return false; }
-void usbNcmSetLinkUp(bool) {}
-}  // namespace nwl
-
 // setup()/loop() kommen aus main.cpp - hier nur ein Einstiegspunkt, damit
 // gebunden werden kann.
 void setup();

@@ -91,9 +91,23 @@
 // USB-C: der ESP32-S3 meldet sich am iPhone als USB-Ethernet (CDC-NCM), weil
 // iOS generische USB-Serial-Geraete nicht an Apps durchreicht. Siehe
 // docs/04-ios-usb.md. Adresse des Scanners: 192.168.7.1
-#define ENABLE_USB_NCM 1
+//
+// Standardmaessig AUS, und das mit Absicht: NCM braucht `esp_tinyusb` aus
+// ESP-IDF. Wer mit `framework = arduino` allein baut - also `pio run -e wifi`
+// oder die Arduino-IDE -, hat das nicht, und der Build scheitert an
+// tinyusb.h. Eingeschaltet wird es von `env:usb` ueber -DENABLE_USB_NCM=1.
+//
+// Die Schalter stehen bewusst in #ifndef: ein blankes #define hier wuerde
+// jede Vorgabe von der Kommandozeile stillschweigend ueberschreiben. Genau
+// das ist einmal passiert - `env:wifi` setzte 0, config.h machte wieder 1
+// daraus, und der Build zog usb_ncm.cpp ohne IDF herein.
+#ifndef ENABLE_USB_NCM
+#define ENABLE_USB_NCM 0
+#endif
 // WLAN als Rueckfallweg. Kostet das iPhone seine Internetverbindung.
+#ifndef ENABLE_WIFI
 #define ENABLE_WIFI 1
+#endif
 
 // WIFI_AP_MODE 1: der Scanner spannt ein eigenes Netz auf (Handy verbindet
 // sich damit). 0: er haengt sich in ein vorhandenes WLAN.

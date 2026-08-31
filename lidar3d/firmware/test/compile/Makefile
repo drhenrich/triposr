@@ -10,16 +10,19 @@
 # und die hier lange unentdeckt bleiben konnte, weil es keine ESP-Toolchain
 # gibt.
 #
-# usb_ncm.cpp fehlt absichtlich: es haengt an esp_tinyusb, dessen API sich
-# zwischen IDF-Fassungen mehrfach geaendert hat. Eine Attrappe davon wuerde
-# eine Vertrautheit vortaeuschen, die nicht da ist. Die Aufrufe aus main.cpp
-# werden trotzdem geprueft - gegen die Deklarationen in usb_ncm.h.
+# usb_ncm.cpp ist mit dabei, aber nur in seiner ausgeschalteten Fassung
+# (ENABLE_USB_NCM 0, der Standard aus config.h): dann besteht es aus drei
+# Rumpffunktionen, und genau die muessen binden - sonst scheitert jeder Build
+# ohne ESP-IDF, also `pio run -e wifi` und die Arduino-IDE. Der eingeschaltete
+# Zweig haengt an esp_tinyusb, dessen API sich zwischen IDF-Fassungen mehrfach
+# geaendert hat; eine Attrappe davon wuerde eine Vertrautheit vortaeuschen,
+# die nicht da ist.
 
 SRC := ../../src
 CXX ?= g++
 CXXFLAGS := -std=gnu++17 -Wall -Wextra -Wshadow -g -Istubs -DARDUINO=200
 
-OBJS := main.o rplidar.o feetech_servo.o yaw_axis.o stubs.o
+OBJS := main.o rplidar.o feetech_servo.o yaw_axis.o usb_ncm.o stubs.o
 
 .PHONY: all clean
 all: compile_check
