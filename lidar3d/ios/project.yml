@@ -1,0 +1,73 @@
+# Bauplan des Xcode-Projekts, fuer XcodeGen.
+#
+#     brew install xcodegen
+#     cd lidar3d/ios && xcodegen
+#     open ScannerApp.xcodeproj
+#
+# Warum so und nicht als fertiges .xcodeproj: eine project.pbxproj ist mehrere
+# tausend Zeilen mit generierten Objekt-IDs. Von Hand geschrieben ist sie
+# praktisch nicht pruefbar und bricht bei jeder Xcode-Version anders. Diese
+# Datei hier ist lesbar, und sie erzeugt das Projekt reproduzierbar - samt der
+# beiden Einstellungen, die man sonst regelmaessig vergisst:
+# NSLocalNetworkUsageDescription und das Deployment Target.
+#
+# Das erzeugte .xcodeproj gehoert nicht ins Repo; es faellt jederzeit neu an.
+
+name: ScannerApp
+
+options:
+  bundleIdPrefix: de.lidar3d
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  # Ohne das legt XcodeGen die Info.plist im Projektordner ab und laesst sie
+  # beim naechsten Lauf stehen - so bleibt sie eine reine Ableitung von hier.
+  generateEmptyDirectories: false
+
+packages:
+  LidarKit:
+    path: LidarKit
+
+targets:
+  ScannerApp:
+    type: application
+    platform: iOS
+
+    sources:
+      # Die vier Swift-Dateien und der Metal-Shader. XcodeGen ordnet .metal
+      # von sich aus den Compile Sources zu.
+      - path: ScannerApp
+
+    dependencies:
+      - package: LidarKit
+
+    info:
+      path: ScannerApp/Info.plist
+      properties:
+        CFBundleDisplayName: LiDAR 3D
+        # OHNE DIESEN EINTRAG scheitert jede Verbindung stillschweigend: iOS
+        # blockiert Zugriffe ins lokale Netz, ohne einen Fehler zu melden.
+        # Der Scanner haengt unter 192.168.7.1 (USB-C) oder 192.168.4.1 (WLAN),
+        # beides lokales Netz.
+        NSLocalNetworkUsageDescription: Verbindung zum LiDAR-Scanner
+        # Die Punktwolke wird quer gehalten genauso gebraucht wie hochkant.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UILaunchScreen: {}
+        # Metal laeuft nicht im Simulator; das Geraet muss es koennen.
+        UIRequiredDeviceCapabilities:
+          - metal
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.lidar3d.scanner
+        # 1 = iPhone, 2 = iPad.
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        # Leer lassen und in Xcode unter Signing & Capabilities das eigene
+        # Team waehlen. Mit einer kostenlosen Apple-ID laeuft die App sieben
+        # Tage, danach neu installieren.
+        DEVELOPMENT_TEAM: ""
+        SWIFT_VERSION: "5.9"
