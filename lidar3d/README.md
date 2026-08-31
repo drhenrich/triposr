@@ -128,9 +128,11 @@ ios/               iPhone-App mit Echtzeit-3D
   LidarKit/         Swift Package: Protokoll, Geometrie, TCP (testbar)
   ScannerApp/       SwiftUI + Metal-Renderer
 host/              Python, nur Standardbibliothek im Kern
-  scan3d/           Dekoder (C1 und S2), Geometrie, PLY-Export, CLI, Leser
+  scan3d/           Dekoder (C1 und S2), Geometrie, PLY-Export, CLI, Leser,
+                    Qualitaetspruefung der Wolke
+  tools/            make_viewer.py: PLY -> drehende HTML-Ansicht
   app/              Streamlit-Oberflaeche: Live 2D, 3D aufnehmen, Diagnose
-  tests/            101 Tests
+  tests/            117 Tests
 tests/wire_fixture.txt  gemeinsame Byte-Fixture aller drei Protokollseiten
 docs/              Hardware, Geometrie/Kalibrierung, Protokolle, iOS/USB-C
 ```
@@ -187,7 +189,7 @@ Sobald sich ein Client verbindet, fährt die Achse einen Sweep.
 ## Tests
 
 ```bash
-cd lidar3d/host && python3 -m unittest discover -s tests -t .   # 101 Tests
+cd lidar3d/host && python3 -m unittest discover -s tests -t .   # 117 Tests
 make -C lidar3d/firmware/test/native                           # 129 Prüfungen
 cd lidar3d/ios/LidarKit && swift test                          # nur auf dem Mac
 ```

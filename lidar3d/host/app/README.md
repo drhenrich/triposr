@@ -60,6 +60,12 @@ später automatisch fährt:
 **180° genügen für die volle Kugel**, weil der LiDAR in seiner Ebene bereits
 360° misst. Bei 5° Schritten sind das 36 Ebenen à ~500 Punkte.
 
+Ab 200 Punkten erscheint unter der Ansicht ein **Befund**: Er prüft, ob die
+Kontur je nach Himmelsrichtung unterschiedlich weit reicht. Tut sie das nicht,
+hat die Drehung nichts beigetragen — meist, weil die Scanebene die Drehachse
+nicht enthält. Der Umschalter **von oben** zeigt dasselbe mit einem Blick: eine
+Raumkontur muss Ecken haben.
+
 Export als **PLY** (öffnet in CloudCompare, MeshLab, Blender) oder als **CSV**
 mit den Spalten `Quality, Angle (degrees), Distance (mm), Rotation` — dieselben
 Spalten wie das Instructables-Skript, sodass `convertAdjust.py` die Datei direkt

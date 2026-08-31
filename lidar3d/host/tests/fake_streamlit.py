@@ -74,6 +74,7 @@ class FakeStreamlit:
         self.charts = 0
         self.figures: List[Any] = []
         self.fragments = 0
+        self.successes: List[str] = []
         self.sidebar = self  # dieselbe Oberflaeche, das genuegt hier
 
     def begin_run(self) -> None:
@@ -87,6 +88,7 @@ class FakeStreamlit:
         self.warnings.clear()
         self.charts = 0
         self.figures.clear()
+        self.successes.clear()
 
     # -- Zustand der Widgets ----------------------------------------------
 
@@ -116,6 +118,7 @@ class FakeStreamlit:
     def metric(self, *a, **kw): pass
     def info(self, *a, **kw): pass
     def progress(self, *a, **kw): pass
+    def success(self, msg='', *a, **kw): self.successes.append(str(msg))
 
     def warning(self, msg="", *a, **kw): self.warnings.append(str(msg))
     def error(self, msg="", *a, **kw): self.errors.append(str(msg))

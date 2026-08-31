@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scan3d import ply, rplidar  # noqa: E402
 from scan3d.geometry import MountGeometry, to_cartesian  # noqa: E402
+from scan3d.quality import analyse, verdict  # noqa: E402
 from scan3d.reader import LidarReader  # noqa: E402
 from scan3d.serial_source import BAUDRATE_C1  # noqa: E402
 
@@ -299,14 +300,24 @@ with tab_3d:
             marker=dict(size=4, color="#888"),
             hovertemplate="Sensor<extra></extra>"))
 
+    angle = st.radio("Blickwinkel", ["frei", "von oben", "von der Seite"],
+                     horizontal=True, label_visibility="collapsed")
+    cameras = {
+        "frei": dict(eye=dict(x=1.6, y=1.6, z=1.0)),
+        # Draufsicht: hier zeigt sich, ob die Raumkontur Ecken hat oder rund
+        # ist - der schnellste Test, ob die Drehung etwas beigetragen hat.
+        "von oben": dict(eye=dict(x=0, y=0, z=2.4), up=dict(x=0, y=1, z=0)),
+        "von der Seite": dict(eye=dict(x=2.4, y=0, z=0), up=dict(x=0, y=0, z=1)),
+    }
     figure3d.update_layout(
         height=620, margin=dict(l=0, r=0, t=0, b=0), showlegend=False,
         scene=dict(aspectmode="data" if cloud else "cube",
                    xaxis_title="x (m)", yaxis_title="y (m)", zaxis_title="z (m)",
-                   camera=dict(eye=dict(x=1.6, y=1.6, z=1.0))))
+                   camera=cameras[angle]))
     st.plotly_chart(figure3d, use_container_width=True)
     st.caption("Ziehen dreht die Wolke, Scrollen zoomt, Rechtsklick-Ziehen "
-               "verschiebt.")
+               "verschiebt. **Von oben** zeigt die Raumkontur - die muss Ecken "
+               "haben, sonst hat die Drehung nichts beigetragen.")
 
     if not cloud:
         st.info("Die Wolke ist leer. Achse auf einen Winkel stellen, den Winkel "
@@ -327,6 +338,14 @@ with tab_3d:
         angles = [f"{a:g}°" for a, _ in planes]
         st.caption(f"Aufgenommen bei: {', '.join(angles[:24])}"
                    + (" …" if len(angles) > 24 else ""))
+
+    # Befund zur Aufnahme, sobald genug Ebenen da sind.
+    if len(cloud) >= 200:
+        info = analyse(cloud)
+        level, headline, text = verdict(info)
+        box = {"kritisch": st.error, "auffällig": st.warning,
+               "plausibel": st.success}.get(level, st.info)
+        box(f"**{headline}** — {text}")
 
     st.divider()
     st.markdown(
