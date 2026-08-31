@@ -58,10 +58,38 @@ simulate = st.sidebar.toggle(
     "Simulierter Raum", value=True,
     help="Ohne Hardware ausprobieren. Ausschalten, sobald der C1 am USB haengt.")
 
-port = st.sidebar.text_input(
-    "Serieller Port", value="/dev/ttyUSB0",
-    help="Linux /dev/ttyUSB0, macOS /dev/tty.usbserial-XXXX, Windows COM5",
-    disabled=simulate)
+@st.cache_data(ttl=5, show_spinner=False)
+def available_ports() -> list:
+    """Vorhandene serielle Ports. Leer, wenn pyserial fehlt."""
+    try:
+        from serial.tools import list_ports
+    except Exception:
+        return []
+    return [(p.device, p.description or "") for p in list_ports.comports()]
+
+
+MANUAL = "manuell eingeben …"
+found = available_ports()
+
+if simulate:
+    port = ""
+    st.sidebar.caption("Port wird im simulierten Betrieb nicht gebraucht.")
+elif found:
+    labels = [f"{dev}  ({desc})" if desc else dev for dev, desc in found]
+    choice = st.sidebar.selectbox(
+        "Serieller Port", labels + [MANUAL], index=0,
+        help="Erkannte Ports. Der C1 heisst auf dem Mac meist "
+             "/dev/tty.usbserial-XXXX, unter Linux /dev/ttyUSB0.")
+    if choice == MANUAL:
+        port = st.sidebar.text_input("Port von Hand", value=found[0][0])
+    else:
+        port = found[labels.index(choice)][0]
+else:
+    st.sidebar.warning("Kein serieller Port gefunden. Steckt der Adapter? "
+                       "Ist pyserial installiert?")
+    port = st.sidebar.text_input(
+        "Serieller Port", value="/dev/ttyUSB0",
+        help="Linux /dev/ttyUSB0, macOS /dev/tty.usbserial-XXXX, Windows COM5")
 baudrate = st.sidebar.number_input(
     "Baudrate", value=BAUDRATE_C1, step=1,
     help="C1: 460800. S2/S3: 1000000.", disabled=simulate)
@@ -87,8 +115,20 @@ min_quality = st.sidebar.slider("Mindestguete", 0, 63, 0,
                                help="0 laesst alles durch. Hoeher filtert schwache Echos.")
 point_size = st.sidebar.slider("Punktgroesse", 1, 8, 3)
 
+# Aendert sich eine dieser Einstellungen, muss der alte Leser weg, bevor der
+# neue startet - sonst haelt sein Thread die serielle Schnittstelle weiter
+# offen und der naechste Verbindungsversuch scheitert mit "resource busy".
+settings = (port, int(baudrate), simulate, int(motor_rpm))
+if st.session_state.get("_settings") not in (None, settings):
+    previous = st.session_state.get("_reader")
+    if previous is not None:
+        previous.stop()
+    get_reader.clear()
+st.session_state._settings = settings
+
 reader = get_reader(port, int(baudrate), simulate, int(motor_rpm),
                     (6.0, 4.0, 2.6), 10.0)
+st.session_state._reader = reader
 
 if st.sidebar.button("Neu verbinden", use_container_width=True):
     reader.stop()          # Serielle Schnittstelle freigeben ...
