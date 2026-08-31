@@ -5,6 +5,7 @@
 #include <freertos/FreeRTOS.h>
 
 #include "lidar_link.h"
+#include "uart_compat.h"
 
 namespace nwl {
 
@@ -19,7 +20,7 @@ class UartLidarLink : public LidarLink {
     cfg.parity = UART_PARITY_DISABLE;
     cfg.stop_bits = UART_STOP_BITS_1;
     cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-    cfg.source_clk = UART_SCLK_DEFAULT;
+    cfg.source_clk = kUartSourceClk;
 
     if (uart_driver_install(port_, rxBuffer, 0, 0, nullptr, 0) != ESP_OK) return false;
     if (uart_param_config(port_, &cfg) != ESP_OK) return false;

@@ -18,26 +18,28 @@
 # geaendert hat; eine Attrappe davon wuerde eine Vertrautheit vortaeuschen,
 # die nicht da ist.
 
-# Beide Anschlusswege werden geprueft. Der USB-Weg ist der Normalfall, aber
-# der UART-Weg ist die Rueckfallebene und darf nicht unbemerkt verrotten.
+# Vier Durchlaeufe: beide Anschlusswege mal beide ESP-IDF-Fassungen.
+#
+# Letzteres, weil die Arduino-Cores 2.x und 3.x unterschiedliche IDF-Versionen
+# mitbringen und der UART-Treiber sich dazwischen geaendert hat. Genau daran
+# ist ein Build beim Benutzer gescheitert - siehe src/uart_compat.h.
 SRC := ../../src
 CXX ?= g++
 BASE := -std=gnu++17 -Wall -Wextra -Wshadow -g -Istubs -DARDUINO=200
 SOURCES := $(SRC)/main.cpp $(SRC)/rplidar.cpp $(SRC)/feetech_servo.cpp \
            $(SRC)/yaw_axis.cpp $(SRC)/usb_ncm.cpp $(SRC)/web_stream.cpp stubs.cpp
 
-.PHONY: all usb uart clean
-all: usb uart
+.PHONY: all clean
+all:
+	@for link in 0 1; do \
+	  for idf in 4 5; do \
+	    printf '%-42s' "LIDAR_LINK_USB=$$link, ESP-IDF $$idf.x"; \
+	    $(CXX) $(BASE) -DLIDAR_LINK_USB=$$link -DSTUB_IDF_MAJOR=$$idf \
+	      -o check_$${link}_$${idf} $(SOURCES) && echo "ok" || exit 1; \
+	  done; \
+	done
 	@echo
 	@echo "Uebersetzung und Bindung fehlerfrei"
 
-usb:
-	@echo "== LiDAR am USB-Host (LIDAR_LINK_USB=1) =="
-	@$(CXX) $(BASE) -DLIDAR_LINK_USB=1 -o check_usb $(SOURCES)
-
-uart:
-	@echo "== LiDAR an der UART (LIDAR_LINK_USB=0) =="
-	@$(CXX) $(BASE) -DLIDAR_LINK_USB=0 -o check_uart $(SOURCES)
-
 clean:
-	@rm -f *.o check_usb check_uart compile_check
+	@rm -f *.o check_* compile_check

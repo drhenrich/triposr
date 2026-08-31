@@ -1,5 +1,7 @@
 #include "feetech_servo.h"
 
+#include "uart_compat.h"
+
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -19,7 +21,7 @@ bool FeetechServo::begin(uart_port_t port, int rxPin, int txPin, int dirPin,
   cfg.parity = UART_PARITY_DISABLE;
   cfg.stop_bits = UART_STOP_BITS_1;
   cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-  cfg.source_clk = UART_SCLK_DEFAULT;
+  cfg.source_clk = kUartSourceClk;
 
   if (uart_driver_install(port_, 512, 512, 0, nullptr, 0) != ESP_OK) return false;
   if (uart_param_config(port_, &cfg) != ESP_OK) return false;
