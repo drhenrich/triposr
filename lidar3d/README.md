@@ -26,7 +26,10 @@ Daraus folgt für den Entwurf:
 1. **Der einfache SCAN-Modus genügt.** 5.000 Messungen/s × 5 Byte sind 25 kB/s,
    durch 460.800 Baud passen rund 46 kB/s. Beim S2 wäre das nicht gegangen
    (160 kB/s durch 100 kB/s) — dort ist der *dense-capsuled* Express-Modus
-   zwingend. Beide Dekoder liegen vor und sind getestet.
+   zwingend. Beide Dekoder liegen vor und sind getestet; die Firmware startet
+   den einfachen Modus und weicht nur aus, wenn er sich nicht starten lässt.
+   Er ist beim C1 sogar der bessere: er schickt zu jeder Messung ihren eigenen
+   Winkel mit, und die des C1 sind nicht gleichmäßig verteilt.
 2. **BLE scheidet aus.** Auch die 5.000 Messungen/s sind noch rund 200 kbit/s
    Nutzlast, und das bei BLEs realistischer Obergrenze. Gestreamt wird über
    **TCP** — wahlweise über das USB-C-Kabel oder über WLAN (siehe unten).
@@ -113,10 +116,11 @@ Netzteil.
 
 ```
 firmware/          ESP32-S3, PlatformIO
+  src/standard_scan.h   C1-Dekoder      (hardwarefrei, nativ getestet)
   src/dense_capsule.h   S2-Dekoder      (hardwarefrei, nativ getestet)
   src/angle_util.h      Winkelfestkomma (hardwarefrei, nativ getestet)
   src/stream_proto.h    Frame-Layout    (hardwarefrei, nativ getestet)
-  src/rplidar_s2.*      UART-Anbindung
+  src/rplidar.*              UART-Anbindung
   src/feetech_bus.h     STS3215-Busprotokoll (hardwarefrei, nativ getestet)
   src/sweep_plan.h      Ebenenaufteilung     (hardwarefrei, nativ getestet)
   src/feetech_servo.*   Servo am Halbduplex-Bus
@@ -201,8 +205,8 @@ verbogen werden.
 
 ## Stand
 
-**Getestet und grün** ist alles, was ohne Hardware prüfbar ist: der
-Capsule-Dekoder, die Winkelinterpolation, das Feetech-Busprotokoll, die
+**Getestet und grün** ist alles, was ohne Hardware prüfbar ist: beide
+LiDAR-Dekoder, die Winkelinterpolation, das Feetech-Busprotokoll, die
 Ebenenaufteilung, die Encoderumrechnung, die Geometrie und das Frameprotokoll
 (Python und C++, byteweise gegeneinander).
 
@@ -210,7 +214,7 @@ Ebenenaufteilung, die Encoderumrechnung, die Geometrie und das Frameprotokoll
 
 | Teil | warum ungeprüft |
 |---|---|
-| `firmware/src/rplidar_s2.cpp`, `feetech_servo.cpp`, `yaw_axis.cpp`, `main.cpp` | keine PlatformIO-Toolchain |
+| `firmware/src/rplidar.cpp`, `feetech_servo.cpp`, `yaw_axis.cpp`, `main.cpp` | keine PlatformIO-Toolchain |
 | `firmware/src/usb_ncm.cpp` und der IDF-Build (`env:usb`) | dito; zusätzlich hat sich die `esp_tinyusb`-API zwischen IDF-Versionen mehrfach geändert — vor dem Flashen gegen das Beispiel `tusb_ncm` der eigenen Version abgleichen |
 | `ios/` (alles) | kein Swift, kein Xcode |
 
@@ -225,6 +229,6 @@ Abschnitt zur Stromversorgung.
 
 * `docs/01-hardware.md` — Stückliste, Mechanik, Verkabelung, Strombedarf
 * `docs/02-geometrie.md` — Mathematik, Abdeckung, Kalibrierung
-* `docs/03-protokolle.md` — S2-Protokoll und Streamformat
+* `docs/03-protokolle.md` — LiDAR-Protokoll (C1 und S2) und Streamformat
 * `docs/04-ios-usb.md` — iPhone am USB-C: was geht und was nicht
 * `ios/README.md` — App bauen und bedienen

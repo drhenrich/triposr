@@ -20,8 +20,9 @@ HEADER = struct.Struct("<HBBHH")  # magic, type, flags, seq, payload_len
 HEADER_SIZE = HEADER.size  # 8
 
 TYPE_HELLO = 0
-TYPE_CAPSULE = 1
+TYPE_CAPSULE = 1  # S2: 40 Messungen auf gleichmaessigem Winkelraster
 TYPE_STATUS = 2
+TYPE_SCAN = 3     # C1: Messungen mit eigenem Winkel je Stueck
 
 FLAG_NEW_REVOLUTION = 1 << 0
 FLAG_SWEEP_ACTIVE = 1 << 1
@@ -31,6 +32,12 @@ CABIN_COUNT = 40
 #: yaw_start_q16 u32, yaw_end_q16 u32, alpha_inc_q16 i32, alpha_q6 u16, reserved u16
 _CAPSULE_HEAD = struct.Struct("<IIiHH")
 CAPSULE_PAYLOAD_SIZE = _CAPSULE_HEAD.size + 2 * CABIN_COUNT  # 96
+
+#: yaw_start_q16 u32, yaw_end_q16 u32, count u16, reserved u16
+_SCAN_HEAD = struct.Struct("<IIHH")
+SCAN_HEAD_SIZE = _SCAN_HEAD.size  # 12
+SCAN_SAMPLE_SIZE = 4              # angle_q6 u16, distance_mm u16
+SCAN_MAX_SAMPLES = 32
 
 #: fw_version u16, lidar_rpm u16, offset_radial_um i32, offset_axial_um i32,
 #: yaw_min_q16 u32, yaw_max_q16 u32
@@ -83,6 +90,46 @@ class CapsuleFrame:
             alpha = (self.alpha_start_deg + i * self.alpha_inc_deg) % 360.0
             yaw = self.yaw_start_deg + yaw_span * i / n
             yield (float(dist), alpha, yaw)
+
+
+@dataclass(frozen=True)
+class ScanFrame:
+    """Eine Gruppe Messungen aus dem einfachen Scanmodus des C1.
+
+    Anders als bei der Capsule traegt jede Messung ihren eigenen Winkel: der C1
+    verteilt seine Messungen nicht exakt gleichmaessig, und ein interpoliertes
+    Raster wuerde diese Information wegwerfen. Ein Frame gehoert immer zu genau
+    einer Umdrehung, deshalb gilt FLAG_NEW_REVOLUTION fuer den ganzen Frame.
+    """
+
+    seq: int
+    flags: int
+    yaw_start_deg: float
+    yaw_end_deg: float
+    angles_deg: Sequence[float]
+    distances_mm: Sequence[int]
+
+    @property
+    def sweep_active(self) -> bool:
+        return bool(self.flags & FLAG_SWEEP_ACTIVE)
+
+    @property
+    def new_revolution(self) -> bool:
+        return bool(self.flags & FLAG_NEW_REVOLUTION)
+
+    def samples(self) -> Iterator[Tuple[float, float, float]]:
+        """(distance_mm, alpha_deg, yaw_deg) je Messung.
+
+        Interpoliert wird nur der Gierwinkel - der Scanwinkel steht gemessen da.
+        """
+        n = len(self.distances_mm)
+        yaw_span = self.yaw_end_deg - self.yaw_start_deg
+        if yaw_span > 180.0:
+            yaw_span -= 360.0
+        elif yaw_span < -180.0:
+            yaw_span += 360.0
+        for i, dist in enumerate(self.distances_mm):
+            yield (float(dist), self.angles_deg[i], self.yaw_start_deg + yaw_span * i / n)
 
 
 @dataclass(frozen=True)
@@ -146,6 +193,49 @@ def decode_capsule(frame: Frame) -> CapsuleFrame:
         alpha_start_deg=alpha_q6 / 64.0,
         alpha_inc_deg=alpha_inc / 65536.0,
         distances_mm=distances,
+    )
+
+
+def encode_scan(
+    seq: int,
+    flags: int,
+    yaw_start_deg: float,
+    yaw_end_deg: float,
+    samples: Sequence[Tuple[float, int]],
+) -> bytes:
+    """(alpha_deg, distance_mm)-Paare als Scanframe. Fuer Tests und Simulator."""
+    if len(samples) > SCAN_MAX_SAMPLES:
+        raise ValueError(f"hoechstens {SCAN_MAX_SAMPLES} Messungen je Frame")
+    payload = bytearray(_SCAN_HEAD.pack(
+        round(yaw_start_deg * 65536) & 0xFFFFFFFF,
+        round(yaw_end_deg * 65536) & 0xFFFFFFFF,
+        len(samples),
+        0,
+    ))
+    for alpha_deg, distance_mm in samples:
+        payload += struct.pack("<HH", round(alpha_deg * 64) & 0xFFFF, distance_mm)
+    return encode_frame(TYPE_SCAN, flags, seq, bytes(payload))
+
+
+def decode_scan(frame: Frame) -> ScanFrame:
+    if frame.type != TYPE_SCAN:
+        raise ValueError(f"kein Scan-Frame (type={frame.type})")
+    if len(frame.payload) < SCAN_HEAD_SIZE:
+        raise ValueError("Scan-Payload zu kurz")
+    yaw_start, yaw_end, count, _ = _SCAN_HEAD.unpack_from(frame.payload)
+    expected = SCAN_HEAD_SIZE + SCAN_SAMPLE_SIZE * count
+    if count > SCAN_MAX_SAMPLES or len(frame.payload) != expected:
+        raise ValueError(
+            f"Scan-Payload hat {len(frame.payload)} Byte, erwartet {expected} "
+            f"fuer {count} Messungen")
+    raw = struct.unpack_from(f"<{2 * count}H", frame.payload, SCAN_HEAD_SIZE)
+    return ScanFrame(
+        seq=frame.seq,
+        flags=frame.flags,
+        yaw_start_deg=yaw_start / 65536.0,
+        yaw_end_deg=yaw_end / 65536.0,
+        angles_deg=tuple(raw[2 * i] / 64.0 for i in range(count)),
+        distances_mm=tuple(raw[2 * i + 1] for i in range(count)),
     )
 
 

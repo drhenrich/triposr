@@ -65,11 +65,23 @@ final class GeometryTests: XCTestCase {
         }
     }
 
+    /// Standardfall: RPLIDAR C1 mit 5000 Messungen/s bei 10 Hz.
     func testSweepPlan() {
         let plan = SweepPlan(yawSpanDeg: 180, yawStepDeg: 1)
         XCTAssertEqual(plan.planes, 180)
         // Je Ebene eine Umdrehung (100 ms) plus Fahrt und Einrasten (50 ms).
         XCTAssertEqual(plan.secondsPerPlane, 0.15, accuracy: 1e-5)
+        XCTAssertEqual(plan.durationSeconds, 27, accuracy: 1e-3)
+        XCTAssertEqual(plan.samplesPerPlane, 500, accuracy: 1e-4)
+        XCTAssertEqual(plan.totalSamples, 90000, accuracy: 1)
+        XCTAssertEqual(plan.inPlaneResolutionDeg, 0.72, accuracy: 1e-6)
+    }
+
+    /// Zum Vergleich der S2: gleiche Dauer, aber 6,4-fache Punktzahl. Die
+    /// Sweep-Dauer haengt an der Scanrate, nicht an der Messrate - beide
+    /// Geraete drehen mit 10 Hz.
+    func testSweepPlanForTheS2() {
+        let plan = SweepPlan(yawSpanDeg: 180, yawStepDeg: 1, samplesPerSecond: 32000)
         XCTAssertEqual(plan.durationSeconds, 27, accuracy: 1e-3)
         XCTAssertEqual(plan.samplesPerPlane, 3200, accuracy: 1e-4)
         XCTAssertEqual(plan.totalSamples, 576000, accuracy: 1)
@@ -85,8 +97,14 @@ final class GeometryTests: XCTestCase {
         let filter = RangeFilter()
         XCTAssertFalse(filter.accepts(0))     // kein Echo
         XCTAssertFalse(filter.accepts(100))   // in der Blindzone
-        XCTAssertFalse(filter.accepts(30001))
+        XCTAssertFalse(filter.accepts(12001))  // hinter der Reichweite des C1
         XCTAssertTrue(filter.accepts(1500))
+    }
+
+    func testRangeFilterCanBeWidenedForTheS2() {
+        let filter = RangeFilter(minMm: 150, maxMm: 30000)
+        XCTAssertTrue(filter.accepts(25000))
+        XCTAssertFalse(filter.accepts(30001))
     }
 }
 

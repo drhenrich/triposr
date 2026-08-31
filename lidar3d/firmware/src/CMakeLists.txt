@@ -2,7 +2,7 @@
 idf_component_register(
     SRCS
         "main.cpp"
-        "rplidar_s2.cpp"
+        "rplidar.cpp"
         "yaw_axis.cpp"
         "feetech_servo.cpp"
         "usb_ncm.cpp"

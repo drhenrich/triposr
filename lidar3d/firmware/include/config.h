@@ -10,11 +10,10 @@
 // Der C1 spricht 3.3-V-TTL-UART mit 460800 Baud, der ESP32-S3 auch: kein
 // Pegelwandler noetig. Versorgung 5 V - nicht aus dem 3.3-V-Regler.
 //
-// ACHTUNG, noch offen: rplidar_s2.cpp startet den dense-capsuled Modus, den
-// der S2 zwingend braucht. Beim C1 reichen 5000 Messungen/s a 5 Byte
-// (25 kB/s von 46 kB/s) fuer den einfachen Scanmodus - der ist einfacher und
-// sicher unterstuetzt. Die Hostseite kann beides bereits
-// (scan3d/rplidar.py: StandardScanParser); die Firmware noch nicht.
+// Betriebsart: die Firmware versucht zuerst den einfachen Scanmodus. Beim C1
+// reichen dafuer 5000 Messungen/s a 5 Byte, also 25 kB/s von 46 kB/s. Nur
+// wenn er sich nicht starten laesst, weicht sie auf die Dense-Capsules aus,
+// die der S2 bei 32000 Messungen/s zwingend braucht. Siehe rplidar.h.
 #define LIDAR_UART_NUM 1
 #define LIDAR_RX_PIN 18  // ESP32 empfaengt, geht an TX des LiDAR
 #define LIDAR_TX_PIN 17  // ESP32 sendet, geht an RX des LiDAR

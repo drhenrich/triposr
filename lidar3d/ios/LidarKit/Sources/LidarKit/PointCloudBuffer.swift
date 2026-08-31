@@ -4,8 +4,8 @@
 // heraus. Das haelt die Konvertierung aus dem Renderloop und braucht keine
 // GPU-Puffer im Netzcode.
 //
-// 32000 Punkte/s sind fuer die CPU nichts; die Umrechnung darf ruhig hier
-// passieren statt im Shader.
+// 5000 Punkte/s (C1) sind fuer die CPU nichts; selbst die 32000 des S2 waeren
+// es nicht. Die Umrechnung darf deshalb hier passieren statt im Shader.
 
 import Foundation
 import simd
@@ -40,24 +40,36 @@ public final class PointCloudBuffer: @unchecked Sendable {
     }
 
     /// Vom Netz-Thread aufgerufen. Threadsicher.
+    /// Dense-Capsules kommen vom S2, ...
     public func append(_ capsule: CapsuleFrame) {
+        ingest(capsule)
+    }
+
+    /// ... Scanframes vom C1. Fuer die Wolke macht das keinen Unterschied:
+    /// beide liefern (Distanz, Scanwinkel, Gierwinkel) je Messung.
+    public func append(_ scan: ScanFrame) {
+        ingest(scan)
+    }
+
+    private func ingest<F: MeasurementFrame>(_ frame: F) {
+        let sweepActive = frame.sweepActive
         lock.lock()
         defer { lock.unlock() }
 
         // Ein neuer Sweep verwirft die alte Wolke. Sauberer als ein Ringpuffer,
         // und der Renderer bekommt nie halb ueberschriebene Daten zu sehen.
-        if capsule.sweepActive && !lastSweepActive {
+        if sweepActive && !lastSweepActive {
             sweepGeneration += 1
             staging.removeAll(keepingCapacity: true)
             accepted = 0
             rejected = 0
         }
-        lastSweepActive = capsule.sweepActive
-        guard capsule.sweepActive, accepted < capacity else { return }
+        lastSweepActive = sweepActive
+        guard sweepActive, accepted < capacity else { return }
 
         let mount = _mount
         let range = _range
-        capsule.forEachSample { dist, alpha, yaw in
+        frame.forEachSample { dist, alpha, yaw in
             guard range.accepts(dist) else {
                 rejected += 1
                 return

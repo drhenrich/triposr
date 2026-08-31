@@ -19,6 +19,7 @@
 #include "../../src/angle_util.h"
 #include "../../src/dense_capsule.h"
 #include "../../src/feetech_bus.h"
+#include "../../src/standard_scan.h"
 #include "../../src/stream_proto.h"
 #include "../../src/sweep_plan.h"
 
@@ -530,6 +531,130 @@ static void testWireFormat(const char *fixturePath) {
   n = writeStatusFrame(buf, 2, 3, kFrameStatus, 5931008u, 123456u, 7u, 2u);
   CHECK_EQ(n, kHeaderSize + kStatusPayloadSize);
   CHECK(toHex(buf, n) == fixture["status"]);
+
+  // Scanframe (C1). Die Winkel sind absichtlich ungleichmaessig - genau so
+  // liefert der C1 sie, und genau deshalb traegt jede Messung ihren eigenen.
+  static const double kAlpha[8] = {0.0, 0.72, 1.51, 2.19, 2.95, 3.68, 4.39, 5.14};
+  ScanSample samples[8];
+  for (int i = 0; i < 8; ++i) {
+    samples[i].angleQ6 = static_cast<uint16_t>(std::lround(kAlpha[i] * 64.0));
+    samples[i].distanceMm = static_cast<uint16_t>(1000 + 5 * i);
+    samples[i].quality = 47;
+    samples[i].newRevolution = (i == 0);
+  }
+  n = writeScanFrame(buf, 4, kFlagNewRevolution | kFlagSweepActive, samples, 8,
+                     2752512u, 2785280u);  // 42.0 und 42.5 Grad in Q16
+  CHECK_EQ(n, kHeaderSize + kScanHeadSize + kScanSampleSize * 8);
+  CHECK_EQ(n, 52u);
+  CHECK(toHex(buf, n) == fixture["scan"]);
+}
+
+// --- Einfacher Scanmodus (C1) --------------------------------------------
+
+struct ScanCollector {
+  std::vector<ScanSample> samples;
+};
+
+static void collectScan(void *ctx, const ScanSample &sample) {
+  static_cast<ScanCollector *>(ctx)->samples.push_back(sample);
+}
+
+// Eine Messung im Rohformat des C1 bauen: 5 Byte, mit den beiden Pruefbits.
+static void makeNode(uint8_t *out, double angleDeg, uint16_t distanceMm,
+                     uint8_t quality, bool startFlag) {
+  const uint16_t angleQ6 = static_cast<uint16_t>(std::lround(angleDeg * 64.0));
+  const uint16_t distanceQ2 = static_cast<uint16_t>(distanceMm * 4);
+  out[0] = static_cast<uint8_t>((quality << 2) | (startFlag ? 0x01 : 0x02));
+  out[1] = static_cast<uint8_t>(((angleQ6 & 0x7F) << 1) | 0x01);
+  out[2] = static_cast<uint8_t>(angleQ6 >> 7);
+  out[3] = static_cast<uint8_t>(distanceQ2);
+  out[4] = static_cast<uint8_t>(distanceQ2 >> 8);
+}
+
+static void testStandardScanHappyPath() {
+  CASE("Einfacher Scan: Winkel, Distanz, Umlaufmarke");
+  uint8_t stream[15];
+  makeNode(stream + 0, 0.0, 1000, 47, true);
+  makeNode(stream + 5, 123.25, 2500, 30, false);
+  makeNode(stream + 10, 359.75, 12000, 15, false);
+
+  ScanCollector out;
+  StandardScanParser parser;
+  parser.feed(stream, sizeof(stream), collectScan, &out);
+
+  CHECK_EQ(out.samples.size(), 3u);
+  if (out.samples.size() < 3) return;
+  CHECK(out.samples[0].newRevolution);
+  CHECK(!out.samples[1].newRevolution);
+  CHECK_EQ(out.samples[0].distanceMm, 1000);
+  CHECK_EQ(out.samples[0].quality, 47);
+  CHECK(std::fabs(out.samples[1].angleQ6 / 64.0 - (123.25)) < (1.0 / 64));
+  CHECK_EQ(out.samples[1].distanceMm, 2500);
+  CHECK(std::fabs(out.samples[2].angleQ6 / 64.0 - (359.75)) < (1.0 / 64));
+  CHECK_EQ(out.samples[2].distanceMm, 12000);
+  CHECK_EQ(parser.resyncs(), 0u);
+}
+
+static void testStandardScanResync() {
+  CASE("Einfacher Scan: findet nach Muell wieder ins Raster");
+  uint8_t stream[23];
+  // Vier Fuellbytes, die als Anfang nicht taugen (S == !S beziehungsweise
+  // check == 0), dann drei saubere Messungen.
+  stream[0] = 0x00;
+  stream[1] = 0xFF;
+  stream[2] = 0x00;
+  stream[3] = 0xFF;
+  makeNode(stream + 4, 10.0, 1100, 20, true);
+  makeNode(stream + 9, 20.0, 1200, 20, false);
+  makeNode(stream + 14, 30.0, 1300, 20, false);
+  stream[19] = 0x00;
+  stream[20] = 0x00;
+  stream[21] = 0x00;
+  stream[22] = 0x00;
+
+  ScanCollector out;
+  StandardScanParser parser;
+  parser.feed(stream, sizeof(stream), collectScan, &out);
+
+  CHECK_EQ(out.samples.size(), 3u);
+  if (out.samples.size() < 3) return;
+  CHECK(std::fabs(out.samples[0].angleQ6 / 64.0 - (10.0)) < (1.0 / 64));
+  CHECK(std::fabs(out.samples[2].angleQ6 / 64.0 - (30.0)) < (1.0 / 64));
+  CHECK(parser.resyncs() > 0u);
+}
+
+static void testStandardScanSplitFeeds() {
+  CASE("Einfacher Scan: Messung ueber zwei Lesevorgaenge hinweg");
+  uint8_t stream[10];
+  makeNode(stream + 0, 45.0, 1500, 40, true);
+  makeNode(stream + 5, 90.0, 1600, 40, false);
+
+  ScanCollector out;
+  StandardScanParser parser;
+  // Mitten in der ersten Messung trennen - so kommt es an der UART wirklich an.
+  parser.feed(stream, 3, collectScan, &out);
+  CHECK_EQ(out.samples.size(), 0u);
+  parser.feed(stream + 3, sizeof(stream) - 3, collectScan, &out);
+  CHECK_EQ(out.samples.size(), 2u);
+  if (out.samples.size() < 2) return;
+  CHECK(std::fabs(out.samples[0].angleQ6 / 64.0 - (45.0)) < (1.0 / 64));
+  CHECK(std::fabs(out.samples[1].angleQ6 / 64.0 - (90.0)) < (1.0 / 64));
+}
+
+static void testStandardScanRoundsQuarterMillimetres() {
+  CASE("Einfacher Scan: Viertelmillimeter werden gerundet, nicht abgeschnitten");
+  uint8_t node[5];
+  makeNode(node, 0.0, 1000, 10, true);
+  // distance_q2 von 4000 auf 4002 anheben: 1000.5 mm, muss auf 1001 runden.
+  node[3] = static_cast<uint8_t>(4002 & 0xFF);
+  node[4] = static_cast<uint8_t>(4002 >> 8);
+
+  ScanCollector out;
+  StandardScanParser parser;
+  parser.feed(node, sizeof(node), collectScan, &out);
+  CHECK_EQ(out.samples.size(), 1u);
+  if (out.samples.empty()) return;
+  CHECK_EQ(out.samples[0].distanceMm, 1001);
 }
 
 int main(int argc, char **argv) {
@@ -552,6 +677,10 @@ int main(int argc, char **argv) {
   testFeetechSignedValues();
   testFeetechStatusParser();
   testFeetechStatusParserRobustness();
+  testStandardScanHappyPath();
+  testStandardScanResync();
+  testStandardScanSplitFeeds();
+  testStandardScanRoundsQuarterMillimetres();
   testWireFormat(fixture);
 
   std::printf("\n%d Pruefungen, %d Fehler\n", g_checks, g_failures);

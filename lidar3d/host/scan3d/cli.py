@@ -40,7 +40,8 @@ def _add_mount_args(p: argparse.ArgumentParser) -> None:
     g.add_argument("--alpha-sign", type=int, choices=(1, -1), default=1)
     g.add_argument("--yaw-zero", type=float, default=0.0)
     g.add_argument("--min-mm", type=float, default=150.0)
-    g.add_argument("--max-mm", type=float, default=30000.0)
+    g.add_argument("--max-mm", type=float, default=12000.0,
+                   help="Reichweite des Geraets; C1 12000, S2 30000")
     g.add_argument("--voxel", type=float, default=0.0,
                    help="Voxelgroesse in m zum Ausduennen (0 = aus)")
 

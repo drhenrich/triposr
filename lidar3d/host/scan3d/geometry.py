@@ -59,7 +59,7 @@ class RangeFilter:
     """Gueltigkeitsfenster fuer Messungen. Laengen in mm."""
 
     min_mm: float = 150.0  # unterhalb der Blindzone (Datenblatt: 50 mm) plus Reserve
-    max_mm: float = 30000.0
+    max_mm: float = 12000.0  # Reichweite des C1; der S2 kaeme auf 30000
 
     def accepts(self, distance_mm: float) -> bool:
         return distance_mm > 0 and self.min_mm <= distance_mm <= self.max_mm

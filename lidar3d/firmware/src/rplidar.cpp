@@ -1,4 +1,4 @@
-#include "rplidar_s2.h"
+#include "rplidar.h"
 
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -12,7 +12,7 @@ namespace nwl {
 static const uint8_t kSyncByte = 0xA5;
 static const uint8_t kSyncByte2 = 0x5A;
 
-bool RPLidarS2::begin(uart_port_t port, int rxPin, int txPin, int baudrate,
+bool RPLidar::begin(uart_port_t port, int rxPin, int txPin, int baudrate,
                       int rxBuffer) {
   port_ = port;
 
@@ -32,10 +32,11 @@ bool RPLidarS2::begin(uart_port_t port, int rxPin, int txPin, int baudrate,
   }
   uart_flush_input(port_);
   parser_.reset();
+  scanParser_.reset();
   return true;
 }
 
-bool RPLidarS2::sendCommand(uint8_t command, const uint8_t *payload, uint8_t len) {
+bool RPLidar::sendCommand(uint8_t command, const uint8_t *payload, uint8_t len) {
   uint8_t frame[64];
   size_t n = 0;
   frame[n++] = kSyncByte;
@@ -53,7 +54,7 @@ bool RPLidarS2::sendCommand(uint8_t command, const uint8_t *payload, uint8_t len
          static_cast<int>(n);
 }
 
-bool RPLidarS2::readDescriptor(uint32_t &length, uint8_t &dataType,
+bool RPLidar::readDescriptor(uint32_t &length, uint8_t &dataType,
                                uint32_t timeoutMs) {
   uint8_t raw[7];
   int got = uart_read_bytes(port_, raw, sizeof(raw), pdMS_TO_TICKS(timeoutMs));
@@ -67,19 +68,21 @@ bool RPLidarS2::readDescriptor(uint32_t &length, uint8_t &dataType,
   return true;
 }
 
-void RPLidarS2::stop() {
+void RPLidar::stop() {
   sendCommand(kCmdStop, nullptr, 0);
   vTaskDelay(pdMS_TO_TICKS(20));
   uart_flush_input(port_);
   parser_.reset();
+  scanParser_.reset();
+  standard_ = false;
 }
 
-bool RPLidarS2::setMotorRpm(uint16_t rpm) {
+bool RPLidar::setMotorRpm(uint16_t rpm) {
   uint8_t payload[2] = {static_cast<uint8_t>(rpm), static_cast<uint8_t>(rpm >> 8)};
   return sendCommand(kCmdMotorSpeed, payload, sizeof(payload));
 }
 
-bool RPLidarS2::getConf(uint32_t confType, const uint8_t *extra, uint8_t extraLen,
+bool RPLidar::getConf(uint32_t confType, const uint8_t *extra, uint8_t extraLen,
                         uint8_t *out, size_t outLen, size_t &written) {
   uint8_t payload[8];
   payload[0] = static_cast<uint8_t>(confType);
@@ -111,7 +114,7 @@ bool RPLidarS2::getConf(uint32_t confType, const uint8_t *extra, uint8_t extraLe
   return true;
 }
 
-int RPLidarS2::startDenseScan() {
+int RPLidar::startDenseScan() {
   stop();
 
   uint8_t buf[8];
@@ -138,10 +141,35 @@ int RPLidarS2::startDenseScan() {
   if (dataType != kAnsDenseCapsuled) return -1;
 
   parser_.reset();
+  standard_ = false;
   return static_cast<int>(mode);
 }
 
-void RPLidarS2::poll(CapsuleSink sink, void *ctx, uint32_t waitMs) {
+bool RPLidar::startStandardScan() {
+  stop();
+
+  // Keine Modusabfrage noetig: der einfache Scan ist bei jedem RPLIDAR da,
+  // und beim C1 ist er ohnehin der einzige, den es gibt.
+  if (!sendCommand(kCmdScan, nullptr, 0)) return false;
+
+  uint32_t respLen = 0;
+  uint8_t dataType = 0;
+  if (!readDescriptor(respLen, dataType, 500)) return false;
+  if (dataType != kAnsMeasurement) return false;
+  if (respLen != kStandardNodeSize) return false;
+
+  scanParser_.reset();
+  standard_ = true;
+  return true;
+}
+
+void RPLidar::pollScan(ScanSampleSink sink, void *ctx, uint32_t waitMs) {
+  int got = uart_read_bytes(port_, chunk_, sizeof(chunk_), pdMS_TO_TICKS(waitMs));
+  if (got <= 0) return;
+  scanParser_.feed(chunk_, static_cast<size_t>(got), sink, ctx);
+}
+
+void RPLidar::poll(CapsuleSink sink, void *ctx, uint32_t waitMs) {
   int got = uart_read_bytes(port_, chunk_, sizeof(chunk_), pdMS_TO_TICKS(waitMs));
   if (got <= 0) return;
   // uart_read_bytes kehrt zurueck, sobald der Puffer voll ist oder die Zeit um

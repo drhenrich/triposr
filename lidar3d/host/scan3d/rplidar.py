@@ -1,7 +1,7 @@
 """RPLIDAR S2 Protokoll: Kommandos und Dekoder fuer "dense capsuled" Scandaten.
 
 Reine Standardbibliothek, damit der Dekoder ohne numpy testbar ist und
-1:1 als Referenz fuer die C++-Firmware dient (siehe firmware/src/rplidar_s2.cpp).
+1:1 als Referenz fuer die C++-Firmware dient (siehe firmware/src/rplidar.cpp).
 
 Warum "dense capsuled" und nicht der einfache SCAN-Modus:
 Der S2 liefert 32000 Messungen/s, die UART laeuft mit 1 Mbaud (~100 kB/s netto).

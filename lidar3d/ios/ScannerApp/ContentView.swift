@@ -46,7 +46,7 @@ struct ContentView: View {
             Text("STANDALONE SWEEP | \(model.transportLabel.uppercased())")
                 .foregroundStyle(model.isConnected ? .green : .orange)
             Text("\(model.stateLabel) | yaw \(format(model.status?.yawDeg ?? 0, 1)) deg")
-            Text("Punkte \(model.visiblePoints) | \(format(model.capsulesPerSecond, 0)) caps/s")
+            Text("Punkte \(model.visiblePoints) | \(format(model.framesPerSecond, 0)) Frames/s")
             if let status = model.status {
                 Text("Pruefsummenfehler \(status.checksumErrors) | verworfen \(status.droppedFrames)")
                     .foregroundStyle(model.hasDrops ? .red : .secondary)

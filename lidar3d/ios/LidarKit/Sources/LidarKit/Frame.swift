@@ -10,8 +10,11 @@ import Foundation
 
 public enum FrameType: UInt8, Sendable {
     case hello = 0
+    /// S2: 40 Messungen auf gleichmaessigem Winkelraster.
     case capsule = 1
     case status = 2
+    /// C1: Messungen mit eigenem Winkel je Stueck.
+    case scan = 3
 }
 
 public struct FrameFlags: OptionSet, Sendable {
@@ -28,6 +31,16 @@ public enum SweepState: UInt8, Sendable {
     case homing = 1
     case sweeping = 2
     case returning = 3
+}
+
+/// Was Capsule und Scanframe gemeinsam haben: eine Folge von Messungen mit
+/// Distanz, Scanwinkel und Gierwinkel. Alles darueber - gleichmaessiges
+/// Winkelraster beim S2, eigener Winkel je Messung beim C1 - ist Sache des
+/// jeweiligen Dekoders und interessiert die Wolke nicht.
+public protocol MeasurementFrame {
+    var sweepActive: Bool { get }
+    /// Ruft `body` fuer jede Messung mit (Distanz mm, Scanwinkel, Gierwinkel).
+    func forEachSample(_ body: (Float, Float, Float) -> Void)
 }
 
 public struct Frame: Sendable {
@@ -121,7 +134,7 @@ public struct FrameParser {
 
 // MARK: - Capsule
 
-public struct CapsuleFrame: Sendable {
+public struct CapsuleFrame: Sendable, MeasurementFrame {
     public static let cabinCount = 40
     public static let payloadSize = 16 + 2 * cabinCount  // 96
 
@@ -162,6 +175,65 @@ public struct CapsuleFrame: Sendable {
             var alpha = (alphaStartDeg + f * alphaIncDeg).truncatingRemainder(dividingBy: 360)
             if alpha < 0 { alpha += 360 }
             body(Float(dist), alpha, yawStartDeg + yawSpan * f / n)
+        }
+    }
+}
+
+/// Eine Gruppe Messungen aus dem einfachen Scanmodus des C1.
+///
+/// Anders als bei der Capsule traegt jede Messung ihren eigenen Winkel: der C1
+/// verteilt seine Messungen nicht exakt gleichmaessig, und ein interpoliertes
+/// Raster wuerde diese Information wegwerfen. Ein Frame gehoert immer zu genau
+/// einer Umdrehung; `newRevolution` gilt deshalb fuer den ganzen Frame.
+public struct ScanFrame: Sendable, MeasurementFrame {
+    public static let headSize = 12
+    public static let sampleSize = 4
+    public static let maxSamples = 32
+
+    public let seq: UInt16
+    public let flags: FrameFlags
+    public let yawStartDeg: Float
+    public let yawEndDeg: Float
+    /// Scanwinkel in Grad, je Messung.
+    public let anglesDeg: [Float]
+    public let distancesMm: [UInt16]
+
+    public var sweepActive: Bool { flags.contains(.sweepActive) }
+    public var newRevolution: Bool { flags.contains(.newRevolution) }
+
+    public init?(_ frame: Frame) {
+        guard frame.type == FrameType.scan.rawValue,
+              frame.payload.count >= Self.headSize else { return nil }
+        let p = frame.payload
+        let count = Int(readU16(p, 8))
+        guard count <= Self.maxSamples,
+              p.count == Self.headSize + Self.sampleSize * count else { return nil }
+
+        seq = frame.seq
+        flags = frame.flags
+        yawStartDeg = Float(readU32(p, 0)) / 65536.0
+        yawEndDeg = Float(readU32(p, 4)) / 65536.0
+        var angles = [Float](repeating: 0, count: count)
+        var distances = [UInt16](repeating: 0, count: count)
+        for i in 0 ..< count {
+            let base = Self.headSize + Self.sampleSize * i
+            angles[i] = Float(readU16(p, base)) / 64.0
+            distances[i] = readU16(p, base + 2)
+        }
+        anglesDeg = angles
+        distancesMm = distances
+    }
+
+    /// Ruft `body` fuer jede Messung mit (Distanz mm, Scanwinkel, Gierwinkel).
+    /// Nur der Gierwinkel wird ueber den Frame interpoliert - der Scanwinkel
+    /// steht ja gemessen da.
+    public func forEachSample(_ body: (Float, Float, Float) -> Void) {
+        var yawSpan = yawEndDeg - yawStartDeg
+        // Nulldurchgang der Gierachse abfangen (im Sweep sollte er nicht auftreten).
+        if yawSpan > 180 { yawSpan -= 360 } else if yawSpan < -180 { yawSpan += 360 }
+        let n = Float(distancesMm.count)
+        for (i, dist) in distancesMm.enumerated() {
+            body(Float(dist), anglesDeg[i], yawStartDeg + yawSpan * Float(i) / n)
         }
     }
 }

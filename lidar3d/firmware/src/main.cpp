@@ -19,7 +19,7 @@
 
 #include "../include/config.h"
 #include "dense_capsule.h"
-#include "rplidar_s2.h"
+#include "rplidar.h"
 #include "stream_proto.h"
 #include "usb_ncm.h"
 #include "yaw_axis.h"
@@ -31,7 +31,7 @@ struct FrameMsg {
   uint8_t bytes[kMaxFrameSize];
 };
 
-static RPLidarS2 g_lidar;
+static RPLidar g_lidar;
 static YawAxis g_axis;
 static CapsuleDecoder g_decoder;
 static QueueHandle_t g_queue = nullptr;
@@ -91,10 +91,68 @@ static void onCapsule(void *, const DenseCapsule &capsule) {
   }
 }
 
+// --- LiDAR-Seite, einfacher Scanmodus (C1) --------------------------------
+//
+// Dieselbe Ebenenlogik wie oben, nur kommt die Umlaufmarke hier je Messung
+// statt je Capsule. Gesammelt wird in Gruppen: ein Frame endet spaetestens
+// nach kScanMaxSamples und immer an einer Umlaufmarke - so gehoert ein Frame
+// nie zu zwei Umdrehungen.
+static ScanSample g_scanBuffer[kScanMaxSamples];
+static int g_scanFill = 0;
+static uint8_t g_scanFlags = 0;
+
+static void flushScanFrame() {
+  if (g_scanFill == 0) return;
+  uint32_t yaw = static_cast<uint32_t>(g_axis.planeYawQ16());
+
+  FrameMsg msg;
+  msg.len = static_cast<uint16_t>(writeScanFrame(
+      msg.bytes, g_seq++, g_scanFlags, g_scanBuffer, g_scanFill, yaw, yaw));
+  g_scanFill = 0;
+  g_scanFlags = 0;
+
+  ++g_capsules;
+  if (xQueueSend(g_queue, &msg, 0) != pdTRUE) {
+    // Queue voll: lieber die neuesten Messungen verwerfen als den LiDAR bremsen.
+    ++g_dropped;
+  }
+}
+
+static void onScanSample(void *, const ScanSample &sample) {
+  bool capturing = g_axis.captureActive();
+  if (capturing != g_lastCaptureActive) {
+    g_lastCaptureActive = capturing;
+    g_planeRecording = false;  // neue Ebene, auf die erste Marke warten
+  }
+
+  if (sample.newRevolution) {
+    // Die Marke gehoert zur naechsten Umdrehung, also erst abschliessen.
+    flushScanFrame();
+    if (capturing) {
+      if (!g_planeRecording) {
+        g_planeRecording = true;
+      } else {
+        // Zweite Marke: die Umdrehung ist voll, weiter zur naechsten Ebene.
+        g_planeRecording = false;
+        g_axis.planeCaptured();
+      }
+    }
+    g_scanFlags |= kFlagNewRevolution;
+  }
+  if (capturing && g_planeRecording) g_scanFlags |= kFlagSweepActive;
+
+  g_scanBuffer[g_scanFill++] = sample;
+  if (g_scanFill == kScanMaxSamples) flushScanFrame();
+}
+
 static void lidarTask(void *) {
   for (;;) {
     if (g_scanRunning) {
-      g_lidar.poll(onCapsule, nullptr, 20);
+      if (g_lidar.usesStandardScan()) {
+        g_lidar.pollScan(onScanSample, nullptr, 20);
+      } else {
+        g_lidar.poll(onCapsule, nullptr, 20);
+      }
     } else {
       vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -234,13 +292,20 @@ void setup() {
   g_lidar.setMotorRpm(LIDAR_RPM);
   delay(1500);  // Anlauf des LiDAR-Motors abwarten
 
-  int mode = g_lidar.startDenseScan();
-  if (mode < 0) {
-    Serial.println("FEHLER: Dense-Scan liess sich nicht starten. Stromversorgung "
-                   "(5 V, >2 W) und Baudrate (1 Mbaud) pruefen.");
-    while (true) delay(1000);
+  // Erst den einfachen Scanmodus versuchen - der C1 kann nur den, und beim S2
+  // scheitert er erst an der Bandbreite. Nur wenn er sich nicht starten
+  // laesst, auf die Dense-Capsules ausweichen.
+  if (g_lidar.startStandardScan()) {
+    Serial.println("LiDAR laeuft im einfachen Scanmodus (C1)");
+  } else {
+    int mode = g_lidar.startDenseScan();
+    if (mode < 0) {
+      Serial.println("FEHLER: Kein Scanmodus liess sich starten. Stromversorgung "
+                     "(5 V, >2 W) und Baudrate pruefen (C1: 460800, S2: 1 Mbaud).");
+      while (true) delay(1000);
+    }
+    Serial.printf("LiDAR laeuft mit Dense-Capsules, Scanmodus %d\n", mode);
   }
-  Serial.printf("LiDAR laeuft, Scanmodus %d\n", mode);
   g_scanRunning = true;
 
   g_queue = xQueueCreate(FRAME_QUEUE_LENGTH, sizeof(FrameMsg));

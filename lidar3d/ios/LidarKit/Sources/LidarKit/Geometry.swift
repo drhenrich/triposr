@@ -42,7 +42,8 @@ public struct RangeFilter: Sendable, Equatable {
     public var maxMm: Float
 
     /// Untergrenze oberhalb der Blindzone (Datenblatt: 50 mm) plus Reserve.
-    public init(minMm: Float = 150, maxMm: Float = 30000) {
+    /// Obergrenze ist die Reichweite des C1 (12 m); der S2 kaeme auf 30 m.
+    public init(minMm: Float = 150, maxMm: Float = 12000) {
         self.minMm = minMm
         self.maxMm = maxMm
     }
@@ -82,6 +83,17 @@ public func project(capsule: CapsuleFrame,
     }
 }
 
+/// Dasselbe fuer den einfachen Scanmodus des C1.
+public func project(scan: ScanFrame,
+                    mount: MountGeometry = .identity,
+                    range: RangeFilter = RangeFilter(),
+                    into points: inout [SIMD3<Float>]) {
+    scan.forEachSample { dist, alpha, yaw in
+        guard range.accepts(dist) else { return }
+        points.append(toCartesian(distanceMm: dist, alphaDeg: alpha, yawDeg: yaw, mount: mount))
+    }
+}
+
 /// Dauer, Punktzahl und Aufloesung eines Sweeps vorausrechnen.
 ///
 /// Der Scanner arbeitet Schritt fuer Schritt: je Ebene anfahren, einrasten,
@@ -95,10 +107,13 @@ public struct SweepPlan: Sendable {
     public let totalSamples: Float
     public let inPlaneResolutionDeg: Float
 
+    /// Vorbelegt mit den Werten des C1: 5000 Messungen/s bei 10 Hz, also rund
+    /// 500 Punkte je Ebene und 0,72 Grad in der Ebene. Der S2 kaeme mit 32000
+    /// auf 0,1125 Grad.
     public init(yawSpanDeg: Float = 180,
                 yawStepDeg: Float = 1,
                 scanHz: Float = 10,
-                samplesPerSecond: Float = 32000,
+                samplesPerSecond: Float = 5000,
                 planeOverheadSeconds: Float = 0.05) {
         planes = yawSpanDeg / yawStepDeg
         secondsPerPlane = 1 / scanHz + planeOverheadSeconds

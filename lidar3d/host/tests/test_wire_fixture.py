@@ -31,8 +31,57 @@ class TestWireFixture(unittest.TestCase):
     def setUpClass(cls):
         cls.fixture = load_fixture()
 
+    #: Die acht Messungen des Scanframes: Winkel bewusst ungleichmaessig,
+    #: genau so liefert der C1 sie.
+    SCAN_SAMPLES = [(0.0, 1000), (0.72, 1005), (1.51, 1010), (2.19, 1015),
+                    (2.95, 1020), (3.68, 1025), (4.39, 1030), (5.14, 1035)]
+
     def test_fixture_has_all_frame_types(self):
-        self.assertEqual(set(self.fixture), {"capsule", "hello", "status"})
+        self.assertEqual(set(self.fixture), {"scan", "capsule", "hello", "status"})
+
+    def test_scan_bytes(self):
+        raw = stream.encode_scan(
+            seq=4,
+            flags=stream.FLAG_NEW_REVOLUTION | stream.FLAG_SWEEP_ACTIVE,
+            yaw_start_deg=42.0,
+            yaw_end_deg=42.5,
+            samples=self.SCAN_SAMPLES,
+        )
+        self.assertEqual(raw, self.fixture["scan"])
+        # 8 Header + 12 Kopf + 8 Messungen a 4 Byte
+        self.assertEqual(len(raw), 52)
+
+    def test_scan_decodes_back(self):
+        scan = stream.decode_scan(
+            next(iter(stream.FrameParser().feed(self.fixture["scan"])))
+        )
+        self.assertTrue(scan.new_revolution)
+        self.assertTrue(scan.sweep_active)
+        self.assertAlmostEqual(scan.yaw_start_deg, 42.0, places=4)
+        self.assertAlmostEqual(scan.yaw_end_deg, 42.5, places=4)
+        self.assertEqual(len(scan.distances_mm), 8)
+        for got, (alpha, distance) in zip(zip(scan.angles_deg, scan.distances_mm),
+                                          self.SCAN_SAMPLES):
+            # Winkel sind Q6, quantisieren also auf 1/64 Grad.
+            self.assertAlmostEqual(got[0], alpha, delta=1 / 64)
+            self.assertEqual(got[1], distance)
+
+    def test_scan_interpolates_only_the_yaw(self):
+        scan = stream.decode_scan(
+            next(iter(stream.FrameParser().feed(self.fixture["scan"])))
+        )
+        rows = list(scan.samples())
+        self.assertAlmostEqual(rows[0][2], 42.0, places=4)
+        self.assertAlmostEqual(rows[4][2], 42.25, places=4)
+        # Der Scanwinkel kommt unveraendert aus den Bytes, nicht aus einem Raster.
+        self.assertEqual([r[1] for r in rows], list(scan.angles_deg))
+
+    def test_scan_with_mismatched_count_is_rejected(self):
+        raw = bytearray(self.fixture["scan"])
+        raw[8 + 8] = 9  # count auf 9 stellen, ohne Bytes anzuhaengen
+        frame = next(iter(stream.FrameParser().feed(bytes(raw))))
+        with self.assertRaises(ValueError):
+            stream.decode_scan(frame)
 
     def test_capsule_bytes(self):
         distances = [1000 + 7 * i for i in range(stream.CABIN_COUNT)]

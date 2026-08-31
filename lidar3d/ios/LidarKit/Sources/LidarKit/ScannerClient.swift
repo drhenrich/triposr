@@ -36,10 +36,11 @@ public enum ScannerConnectionState: Equatable, Sendable {
     case failed(String)
 }
 
-/// Verbindet sich, dekodiert den Strom und reicht Capsules weiter.
+/// Verbindet sich, dekodiert den Strom und reicht Messdaten weiter.
 ///
-/// `onCapsule` wird auf einer internen Hintergrundqueue aufgerufen, nicht auf
-/// dem Mainthread - bei 800 Capsules/s hat der Mainthread Besseres zu tun.
+/// `onCapsule` und `onScan` werden auf einer internen Hintergrundqueue
+/// aufgerufen, nicht auf dem Mainthread - bei 160 Frames/s (C1) bis 800 (S2)
+/// hat der Mainthread Besseres zu tun.
 /// Der Empfaenger muss threadsicher sein (`PointCloudBuffer` ist es).
 /// `onState`, `onHello` und `onStatus` kommen dagegen auf dem Mainthread.
 public final class ScannerClient: @unchecked Sendable {
@@ -54,7 +55,11 @@ public final class ScannerClient: @unchecked Sendable {
     /// Wie lange auf eine Adresse gewartet wird, bevor die naechste drankommt.
     public var probeTimeout: TimeInterval = 2.5
 
+    /// Dense-Capsules des S2.
     public var onCapsule: ((CapsuleFrame) -> Void)?
+    /// Scanframes des C1. Welche der beiden kommen, entscheidet die Firmware
+    /// nach angeschlossenem Geraet - die App verarbeitet beide.
+    public var onScan: ((ScanFrame) -> Void)?
     public var onState: ((ScannerConnectionState) -> Void)?
     public var onHello: ((HelloFrame) -> Void)?
     public var onStatus: ((StatusFrame) -> Void)?
@@ -174,6 +179,8 @@ public final class ScannerClient: @unchecked Sendable {
         switch frame.type {
         case FrameType.capsule.rawValue:
             if let capsule = CapsuleFrame(frame) { onCapsule?(capsule) }
+        case FrameType.scan.rawValue:
+            if let scan = ScanFrame(frame) { onScan?(scan) }
         case FrameType.hello.rawValue:
             if let hello = HelloFrame(frame) {
                 DispatchQueue.main.async { self.onHello?(hello) }

@@ -47,8 +47,58 @@ final class WireFixtureTests: XCTestCase {
 
     func testFixtureLoads() throws {
         let fixture = try Self.loadFixture()
-        XCTAssertEqual(Set(fixture.keys), ["capsule", "hello", "status"])
+        XCTAssertEqual(Set(fixture.keys), ["scan", "capsule", "hello", "status"])
         XCTAssertEqual(fixture["capsule"]?.count, 104)
+        // 8 Header + 12 Kopf + 8 Messungen a 4 Byte
+        XCTAssertEqual(fixture["scan"]?.count, 52)
+    }
+
+    func testDecodesScan() throws {
+        let fixture = try Self.loadFixture()
+        var parser = FrameParser()
+        let frames = parser.feed(fixture["scan"]!)
+        XCTAssertEqual(frames.count, 1)
+
+        let scan = try XCTUnwrap(ScanFrame(frames[0]))
+        XCTAssertEqual(scan.seq, 4)
+        XCTAssertTrue(scan.newRevolution)
+        XCTAssertTrue(scan.sweepActive)
+        XCTAssertEqual(scan.yawStartDeg, 42.0, accuracy: 1.0 / 65536)
+        XCTAssertEqual(scan.yawEndDeg, 42.5, accuracy: 1.0 / 65536)
+        XCTAssertEqual(scan.distancesMm.count, 8)
+        XCTAssertEqual(scan.distancesMm.first, 1000)
+        XCTAssertEqual(scan.distancesMm.last, 1035)
+        // Winkel sind Q6, quantisieren also auf 1/64 Grad.
+        XCTAssertEqual(scan.anglesDeg[0], 0.0, accuracy: 1.0 / 64)
+        XCTAssertEqual(scan.anglesDeg[1], 0.72, accuracy: 1.0 / 64)
+        XCTAssertEqual(scan.anglesDeg[7], 5.14, accuracy: 1.0 / 64)
+    }
+
+    func testScanInterpolatesOnlyTheYaw() throws {
+        let fixture = try Self.loadFixture()
+        var parser = FrameParser()
+        let scan = try XCTUnwrap(ScanFrame(parser.feed(fixture["scan"]!)[0]))
+
+        var yaws: [Float] = []
+        var alphas: [Float] = []
+        scan.forEachSample { _, alpha, yaw in
+            alphas.append(alpha)
+            yaws.append(yaw)
+        }
+        // Gierwinkel gleichmaessig ueber den Frame ...
+        XCTAssertEqual(yaws.first!, 42.0, accuracy: 1e-3)
+        XCTAssertEqual(yaws[4], 42.25, accuracy: 1e-3)
+        // ... Scanwinkel dagegen unveraendert aus den Bytes.
+        XCTAssertEqual(alphas, scan.anglesDeg)
+    }
+
+    func testRejectsScanWithMismatchedCount() throws {
+        let fixture = try Self.loadFixture()
+        var bytes = fixture["scan"]!
+        // count auf 9 stellen, ohne Bytes anzuhaengen: muss abgelehnt werden.
+        bytes[8 + 8] = 9
+        var parser = FrameParser()
+        XCTAssertNil(ScanFrame(parser.feed(bytes)[0]))
     }
 
     func testDecodesCapsule() throws {

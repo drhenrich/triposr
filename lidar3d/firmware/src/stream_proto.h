@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "dense_capsule.h"
+#include "standard_scan.h"
 
 namespace nwl {
 
@@ -15,8 +16,9 @@ static const size_t kHeaderSize = 8;
 
 enum FrameType : uint8_t {
   kFrameHello = 0,
-  kFrameCapsule = 1,
+  kFrameCapsule = 1,  // S2: 40 Messungen auf gleichmaessigem Winkelraster
   kFrameStatus = 2,
+  kFrameScan = 3,     // C1: Messungen mit eigenem Winkel je Stueck
 };
 
 enum FrameFlags : uint8_t {
@@ -36,7 +38,21 @@ static const size_t kCapsulePayloadSize = 16 + 2 * kDenseCabinCount;  // 96
 static const size_t kCapsuleFrameSize = kHeaderSize + kCapsulePayloadSize;  // 104
 static const size_t kHelloPayloadSize = 20;
 static const size_t kStatusPayloadSize = 20;
-static const size_t kMaxFrameSize = kCapsuleFrameSize;
+
+// Scanframe (C1): Kopf mit Gierwinkel und Anzahl, dann je Messung 4 Byte.
+// Der einfache Scanmodus liefert zu jeder Messung ihren eigenen Winkel, und
+// der ist nicht gleichmaessig verteilt - anders als beim S2 laesst er sich
+// also nicht aus Startwinkel und Schrittweite rekonstruieren. Deshalb geht er
+// mit ueber die Leitung: 4 Byte * 5000/s = 20 kB/s, unkritisch.
+static const int kScanMaxSamples = 32;
+static const size_t kScanHeadSize = 12;
+static const size_t kScanSampleSize = 4;
+static const size_t kScanMaxPayloadSize =
+    kScanHeadSize + kScanSampleSize * kScanMaxSamples;  // 140
+static const size_t kScanMaxFrameSize = kHeaderSize + kScanMaxPayloadSize;  // 148
+
+static const size_t kMaxFrameSize =
+    kCapsuleFrameSize > kScanMaxFrameSize ? kCapsuleFrameSize : kScanMaxFrameSize;
 
 namespace detail {
 inline void put16(uint8_t *p, uint16_t v) {
@@ -79,6 +95,28 @@ inline size_t writeCapsuleFrame(uint8_t *out, uint16_t seq, uint8_t flags,
     detail::put16(p + 16 + 2 * i, span.distanceMm[i]);
   }
   return kCapsuleFrameSize;
+}
+
+// Eine Gruppe Messungen aus dem einfachen Scanmodus serialisieren.
+// Eine Gruppe endet spaetestens nach kScanMaxSamples und immer an einer
+// Umdrehungsgrenze - so gehoert ein Frame nie zu zwei Umdrehungen, und
+// kFlagNewRevolution gilt fuer den ganzen Frame.
+inline size_t writeScanFrame(uint8_t *out, uint16_t seq, uint8_t flags,
+                             const ScanSample *samples, int count,
+                             uint32_t yawStartQ16, uint32_t yawEndQ16) {
+  if (count > kScanMaxSamples) count = kScanMaxSamples;
+  const size_t payloadLen = kScanHeadSize + kScanSampleSize * count;
+  writeHeader(out, kFrameScan, flags, seq, static_cast<uint16_t>(payloadLen));
+  uint8_t *p = out + kHeaderSize;
+  detail::put32(p + 0, yawStartQ16);
+  detail::put32(p + 4, yawEndQ16);
+  detail::put16(p + 8, static_cast<uint16_t>(count));
+  detail::put16(p + 10, 0);  // reserviert
+  for (int i = 0; i < count; ++i) {
+    detail::put16(p + kScanHeadSize + kScanSampleSize * i, samples[i].angleQ6);
+    detail::put16(p + kScanHeadSize + kScanSampleSize * i + 2, samples[i].distanceMm);
+  }
+  return kHeaderSize + payloadLen;
 }
 
 inline size_t writeHelloFrame(uint8_t *out, uint16_t seq, uint16_t fwVersion,
