@@ -1,19 +1,30 @@
-"""Direktbetrieb: RPLIDAR S2 haengt per USB-Adapter am PC.
+"""Direktbetrieb: der LiDAR haengt per USB-Adapter am PC.
 
-Nuetzlich zum Einfahren, bevor die Firmware fertig ist: der ESP32 dreht nur
-die Achse mit konstanter Rate, der PC liest den LiDAR und rechnet den
-Gierwinkel aus der Zeit. Braucht ``pyserial``.
+Zwei Geraete, zwei Betriebsarten:
+
+* **RPLIDAR C1** - 5000 Messungen/s bei 460800 Baud. Das sind 25 kB/s von
+  46 kB/s Leitungskapazitaet, also genuegt der einfache Scanmodus mit 5 Byte
+  je Messung. Das ist der Standardfall (``start_standard_scan``).
+* **RPLIDAR S2** - 32000 Messungen/s bei 1 MBaud. 160 kB/s passen nicht durch
+  100 kB/s, deshalb zwingend der dense-capsuled Modus
+  (``start_dense_scan``).
+
+Braucht ``pyserial``.
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Iterator, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 from . import rplidar
 
-DEFAULT_BAUDRATE = 1_000_000
+#: RPLIDAR C1 ab Werk.
+BAUDRATE_C1 = 460_800
+#: RPLIDAR S2 und S3.
+BAUDRATE_S2 = 1_000_000
+DEFAULT_BAUDRATE = BAUDRATE_C1
 
 
 @dataclass
@@ -48,6 +59,8 @@ class SerialLidar:
         self._ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
         self._parser = rplidar.CapsuleParser()
         self._decoder = rplidar.CapsuleDecoder()
+        self._standard = rplidar.StandardScanParser()
+        self._assembler = rplidar.RevolutionAssembler()
 
     def close(self) -> None:
         try:
@@ -84,6 +97,63 @@ class SerialLidar:
 
     def set_motor_rpm(self, rpm: int) -> None:
         self._ser.write(rplidar.cmd_motor_rpm(rpm))
+
+    def device_info(self) -> dict:
+        """Modell, Firmware- und Hardwarestand. Guter erster Verbindungstest."""
+        self._ser.write(rplidar.cmd_get_device_info())
+        desc = self._read_descriptor()
+        body = self._ser.read(desc.length)
+        if len(body) != desc.length or desc.length < 20:
+            raise RuntimeError("Geraeteinfo unvollstaendig")
+        return {
+            "model": body[0],
+            "firmware": f"{body[2]}.{body[1]}",
+            "hardware": body[3],
+            "serial": body[4:20].hex(),
+        }
+
+    def health(self) -> Tuple[int, int]:
+        """(Status, Fehlercode). Status 0 = gut, 1 = Warnung, 2 = Fehler."""
+        self._ser.write(rplidar.cmd_get_health())
+        desc = self._read_descriptor()
+        body = self._ser.read(desc.length)
+        if len(body) < 3:
+            raise RuntimeError("Health-Antwort unvollstaendig")
+        return body[0], int.from_bytes(body[1:3], "little")
+
+    def start_standard_scan(self) -> None:
+        """Einfacher Scanmodus, 5 Byte je Messung - der Weg fuer den C1."""
+        self._ser.write(rplidar.cmd_stop())
+        time.sleep(0.05)
+        self._ser.reset_input_buffer()
+
+        self._ser.write(rplidar.cmd_scan())
+        desc = self._read_descriptor()
+        if desc.data_type != rplidar.ANS_TYPE_MEASUREMENT:
+            raise RuntimeError(
+                f"Scan liefert Typ 0x{desc.data_type:02X}, erwartet 0x81")
+        if desc.length != rplidar.STANDARD_NODE_SIZE:
+            raise RuntimeError(
+                f"Messung ist {desc.length} statt "
+                f"{rplidar.STANDARD_NODE_SIZE} Byte lang")
+        self._standard = rplidar.StandardScanParser()
+        self._assembler = rplidar.RevolutionAssembler()
+
+    def revolutions(self) -> Iterator[List[rplidar.Sample]]:
+        """Vollstaendige Umdrehungen; laeuft, bis der Aufrufer abbricht.
+
+        Nur nach ``start_standard_scan`` verwenden.
+        """
+        while True:
+            chunk = self._ser.read(self._ser.in_waiting or rplidar.STANDARD_NODE_SIZE)
+            if not chunk:
+                continue
+            for revolution in self._assembler.feed(self._standard.feed(chunk)):
+                yield revolution
+
+    @property
+    def resyncs(self) -> int:
+        return self._standard.resyncs
 
     def start_dense_scan(self, mode: Optional[int] = None) -> int:
         """Express-Scan im typischen Modus starten; prueft auf Dense-Capsules."""

@@ -1,34 +1,35 @@
-# lidar3d — 3D-Scanner aus einem RPLIDAR S2
+# lidar3d — 3D-Scanner aus einem 2D-LiDAR
 
 Ein 2D-LiDAR wird von einem Servo um eine senkrechte Achse gedreht.
 Jede Messung ist damit eine Kugelkoordinate, und aus dem 2D-Scanner wird ein
 3D-Scanner. Der Aufbau steht still und scannt seine Umgebung — es wird kein
 ARCore und kein Kameratracking gebraucht.
 
-Das ist der gleiche Ansatz wie in der Vorlage von `northworkslab`, aber mit
-einem RPLIDAR S2 statt eines kleinen LD19/LD06-Moduls. Der S2 ist deutlich
-stärker — und genau das ändert einige Entscheidungen im Aufbau.
+Das ist der gleiche Ansatz wie in der Vorlage von `northworkslab`.
+Gearbeitet wird mit einem **RPLIDAR C1**; die Hostseite kann daneben auch den
+größeren S2, weil der Entwurf zunächst darauf ausgelegt war.
 
-## Was der S2 am Konzept ändert
+## Der verwendete Sensor
 
-| | LD19/LD06-Klasse | RPLIDAR S2 |
+| | RPLIDAR C1 | RPLIDAR S2 |
 |---|---|---|
-| Reichweite | ~12 m | 30 m (weiß), ≥10 m (schwarz) |
-| Messrate | ~4.500/s | **32.000/s** |
-| Gewicht | ~40 g | **190 g** |
-| Schnittstelle | 230 kBaud | **1 MBaud TTL 3,3 V** |
-| Versorgung | 5 V, <1 W | 5 V, >2 W |
-| Maße | ~38 mm | 77 × 77 × 38,85 mm |
+| Reichweite | 12 m (weiß) | 30 m (weiß) |
+| Messrate | **5.000/s** | 32.000/s |
+| Winkelauflösung | ~0,72° | 0,1125° |
+| Scanrate | 8–12 Hz | 8–15 Hz |
+| Schnittstelle | **460.800 Baud TTL** | 1 MBaud TTL |
+| Gewicht | ~110 g | 190 g |
+| Schutzklasse | IP54 | IP65 |
 
-Vier Konsequenzen, die den Entwurf bestimmen:
+Daraus folgt für den Entwurf:
 
-1. **Der einfache SCAN-Modus reicht nicht.** 32.000 Messungen/s × 5 Byte sind
-   160 kB/s, durch 1 MBaud passen aber nur ~100 kB/s. Deshalb muss der
-   *dense-capsuled* Express-Modus benutzt werden: 40 Messungen in 84 Byte,
-   also 2,1 Byte pro Messung bzw. ~67 kB/s. Das passt.
-2. **BLE scheidet aus.** Der Datenstrom zum Handy sind ~640 kbit/s. BLE schafft
-   realistisch 100–200 kbit/s. Gestreamt wird deshalb über **TCP** — wahlweise
-   über das USB-C-Kabel oder über WLAN (siehe unten).
+1. **Der einfache SCAN-Modus genügt.** 5.000 Messungen/s × 5 Byte sind 25 kB/s,
+   durch 460.800 Baud passen rund 46 kB/s. Beim S2 wäre das nicht gegangen
+   (160 kB/s durch 100 kB/s) — dort ist der *dense-capsuled* Express-Modus
+   zwingend. Beide Dekoder liegen vor und sind getestet.
+2. **BLE scheidet aus.** Auch die 5.000 Messungen/s sind noch rund 200 kbit/s
+   Nutzlast, und das bei BLEs realistischer Obergrenze. Gestreamt wird über
+   **TCP** — wahlweise über das USB-C-Kabel oder über WLAN (siehe unten).
 3. **190 g brauchen ein Lager, nicht mehr Motor.** Die Gierachse ist ein
    Feetech STS3215 (12 V, 30 kg·cm, 1:345). Sein Drehmoment ist reichlich; das
    Kippmoment der 190 g nimmt ein Rillenkugellager auf, nicht die
@@ -63,13 +64,14 @@ Ebenenabstand        1.000 deg
 Scanebenen           180
 Sweep-Dauer          27.0 s
 Zeit je Ebene        150 ms
-Messungen je Ebene   3200
-Aufloesung in Ebene  0.1125 deg
-Punkte gesamt        576000
+Messungen je Ebene   500
+Aufloesung in Ebene  0.7200 deg
+Punkte gesamt        90000
 ```
 
-27 Sekunden für 576.000 Punkte — der Preis gegenüber 18 s bei Dauerfahrt. Bei
-0,5° Ebenenabstand sind es 54 s und 1,15 Mio. Punkte.
+27 Sekunden für 90.000 Punkte. Die Dauer hängt an der **Scanrate** (10 Hz), nicht
+an der Messrate — mit einem S2 wären es dieselben 27 s, nur mit 576.000 Punkten.
+Bei 0,5° Ebenenabstand verdoppelt sich beides.
 
 ## iPhone am USB-C
 
@@ -103,7 +105,7 @@ hoch, wenn alles andere steht), und ohne
 `NSLocalNetworkUsageDescription` in der `Info.plist` blockiert iOS jede
 Verbindung — stillschweigend.
 
-Und: **das iPhone versorgt den Scanner nicht.** Der S2 will >2 W, der
+Und: **das iPhone versorgt den Scanner nicht.** Der LiDAR und der
 Servo 12 V. Das Kabel überträgt nur Daten, der Scanner hat sein eigenes
 Netzteil.
 
@@ -126,30 +128,37 @@ ios/               iPhone-App mit Echtzeit-3D
   LidarKit/         Swift Package: Protokoll, Geometrie, TCP (testbar)
   ScannerApp/       SwiftUI + Metal-Renderer
 host/              Python, nur Standardbibliothek im Kern
-  scan3d/           Dekoder, Geometrie, PLY-Export, CLI
-  tests/            65 Tests
+  scan3d/           Dekoder (C1 und S2), Geometrie, PLY-Export, CLI, Leser
+  app/              Streamlit-Oberflaeche: Live 2D, 3D aufnehmen, Diagnose
+  tests/            91 Tests
 tests/wire_fixture.txt  gemeinsame Byte-Fixture aller drei Protokollseiten
 docs/              Hardware, Geometrie/Kalibrierung, Protokolle, iOS/USB-C
 ```
 
 ## Loslegen
 
-**Ohne Hardware** — die ganze Kette einmal durchspielen:
+**Der C1 am USB — mit Oberfläche.** Das ist der schnellste Weg zu sichtbaren
+Daten:
 
 ```bash
 cd host
-python3 -m scan3d simulate --step 1 --color -o test.ply
+pip install -r requirements-app.txt
+streamlit run app/streamlit_app.py
 ```
 
-Erzeugt einen simulierten 6 × 4 × 2,6 m Raum mit dem echten Sweep-Muster.
-Die PLY-Datei öffnet sich in CloudCompare, MeshLab oder Blender.
+Startet mit simuliertem Raum, läuft also sofort auch ohne Hardware. In der
+Seitenleiste umschalten, sobald der C1 dranhängt (Port, 460800 Baud). Details in
+[`host/app/README.md`](host/app/README.md).
 
-**Nur der LiDAR am PC** — zum Einfahren, bevor die Firmware läuft:
+**Ohne Oberfläche, nur Kommandozeile:**
 
 ```bash
-pip install pyserial
-python3 -m scan3d serial /dev/ttyUSB0 --duration 20 --yaw-rate 10 -o scan.ply
+python3 -m scan3d simulate --step 1 --color -o test.ply     # ohne Hardware
+python3 -m scan3d serial /dev/ttyUSB0 --duration 20 -o scan.ply
 ```
+
+`serial` nimmt standardmäßig 460800 Baud und den einfachen Scanmodus (C1);
+für den S2 `--baudrate 1000000 --mode dense`.
 
 **Vollständiger Aufbau:**
 
@@ -166,7 +175,7 @@ Sobald sich ein Client verbindet, fährt die Achse einen Sweep.
 ## Tests
 
 ```bash
-cd host && python3 -m unittest discover -s tests -t .   # 65 Tests
+cd host && python3 -m unittest discover -s tests -t .   # 91 Tests
 make -C firmware/test/native                            # 129 Prüfungen
 cd ios/LidarKit && swift test                           # nur auf dem Mac
 ```

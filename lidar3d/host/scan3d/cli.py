@@ -101,17 +101,44 @@ def cmd_serial(args: argparse.Namespace) -> int:
     from .serial_source import LinearYaw, SerialLidar
 
     yaw = LinearYaw(start_deg=args.yaw_start, rate_deg_s=args.yaw_rate)
+    samples: List[Triple] = []
+
     with SerialLidar(args.port, args.baudrate) as lidar:
-        mode = lidar.start_dense_scan()
-        print(f"Scanmodus {mode}, Dense-Capsules aktiv")
-        yaw.start()
+        try:
+            info = lidar.device_info()
+            status, _ = lidar.health()
+            print(f"Modell {info['model']}, Firmware {info['firmware']}, "
+                  f"Health {['gut', 'Warnung', 'Fehler'][status] if status < 3 else status}")
+        except Exception as exc:
+            print(f"Geraeteinfo nicht lesbar ({exc}) - Scan wird trotzdem versucht")
+
         deadline = time.monotonic() + args.duration
-        samples: List[Triple] = []
-        for triple in lidar.samples(yaw):
-            samples.append(triple)
-            if time.monotonic() >= deadline:
-                break
-        print(f"{len(samples)} Messungen, {lidar.checksum_errors} Pruefsummenfehler")
+
+        if args.mode == "standard":
+            # RPLIDAR C1: 5000 Messungen/s a 5 Byte passen durch 460800 Baud.
+            lidar.start_standard_scan()
+            print("Einfacher Scanmodus aktiv")
+            yaw.start()
+            for revolution in lidar.revolutions():
+                now = time.monotonic()
+                yaw_deg = yaw.at(now)
+                samples.extend((s.distance_mm, s.angle_deg, yaw_deg)
+                               for s in revolution)
+                if now >= deadline:
+                    break
+            print(f"{len(samples)} Messungen, {lidar.resyncs} Resyncs")
+        else:
+            # RPLIDAR S2/S3: nur der dense-capsuled Modus passt durch 1 MBaud.
+            mode = lidar.start_dense_scan()
+            print(f"Scanmodus {mode}, Dense-Capsules aktiv")
+            yaw.start()
+            for triple in lidar.samples(yaw):
+                samples.append(triple)
+                if time.monotonic() >= deadline:
+                    break
+            print(f"{len(samples)} Messungen, "
+                  f"{lidar.checksum_errors} Pruefsummenfehler")
+
     if not samples:
         return 1
     _export(args, samples)
@@ -160,7 +187,8 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--span", type=float, default=180.0, help="Gierbereich in deg")
     plan.add_argument("--step", type=float, default=1.0, help="Ebenenabstand in deg")
     plan.add_argument("--scan-hz", type=float, default=10.0)
-    plan.add_argument("--sample-rate", type=float, default=32000.0)
+    plan.add_argument("--sample-rate", type=float, default=5000.0,
+                      help="C1: 5000 (Standard). S2: 32000.")
     plan.set_defaults(func=cmd_plan)
 
     cap = sub.add_parser("capture", help="Sweep ueber WLAN holen")
@@ -172,9 +200,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_mount_args(cap)
     cap.set_defaults(func=cmd_capture)
 
-    ser = sub.add_parser("serial", help="S2 direkt am USB-Adapter")
+    ser = sub.add_parser("serial", help="LiDAR direkt am USB-Adapter")
     ser.add_argument("port", help="z.B. /dev/ttyUSB0 oder COM5")
-    ser.add_argument("--baudrate", type=int, default=1_000_000)
+    ser.add_argument("--baudrate", type=int, default=460_800,
+                     help="C1: 460800 (Standard). S2/S3: 1000000.")
+    ser.add_argument("--mode", choices=("standard", "dense"), default="standard",
+                     help="standard = einfacher Scanmodus (C1), "
+                          "dense = dense-capsuled Express (S2/S3)")
     ser.add_argument("--duration", type=float, default=20.0, help="Aufnahmedauer in s")
     ser.add_argument("--yaw-rate", type=float, default=10.0, help="Gierrate in deg/s")
     ser.add_argument("--yaw-start", type=float, default=0.0)
@@ -189,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
     sim.add_argument("--span", type=float, default=180.0)
     sim.add_argument("--step", type=float, default=1.0)
     sim.add_argument("--scan-hz", type=float, default=10.0)
-    sim.add_argument("--sample-rate", type=float, default=32000.0)
+    sim.add_argument("--sample-rate", type=float, default=5000.0)
     sim.add_argument("-o", "--output", default="simulated.ply")
     sim.add_argument("--color", action="store_true")
     _add_mount_args(sim)

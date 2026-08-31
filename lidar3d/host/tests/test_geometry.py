@@ -111,11 +111,24 @@ class TestProject(unittest.TestCase):
 
 
 class TestSweepPlan(unittest.TestCase):
-    def test_180_degrees_at_one_degree_steps(self):
+    def test_180_degrees_at_one_degree_steps_c1(self):
+        """Standardfall: RPLIDAR C1 mit 5000 Messungen/s bei 10 Hz."""
         info = sweep_plan(180.0, 1.0)
         self.assertEqual(info["planes"], 180.0)
         # Je Ebene eine Umdrehung (100 ms) plus Fahrt und Einrasten (50 ms).
         self.assertAlmostEqual(info["seconds_per_plane"], 0.15)
+        self.assertAlmostEqual(info["duration_s"], 27.0)
+        self.assertAlmostEqual(info["samples_per_plane"], 500.0)
+        self.assertAlmostEqual(info["total_samples"], 90000.0)
+        self.assertAlmostEqual(info["in_plane_resolution_deg"], 0.72)
+
+    def test_180_degrees_at_one_degree_steps_s2(self):
+        """Zum Vergleich der S2: gleiche Dauer, aber 6.4-fache Punktzahl.
+
+        Die Sweep-Dauer haengt an der Scanrate, nicht an der Messrate - beide
+        Geraete drehen mit 10 Hz.
+        """
+        info = sweep_plan(180.0, 1.0, samples_per_second=32000.0)
         self.assertAlmostEqual(info["duration_s"], 27.0)
         self.assertAlmostEqual(info["samples_per_plane"], 3200.0)
         self.assertAlmostEqual(info["total_samples"], 576000.0)

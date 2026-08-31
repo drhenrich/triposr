@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
-from typing import Iterator, List, Optional, Sequence
+from typing import Iterable, Iterator, List, Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # Kommandos (aus sl_lidar_cmd.h des Slamtec SDK)
@@ -74,6 +74,24 @@ def cmd_with_payload(command: int, payload: bytes) -> bytes:
     if len(payload) > 255:
         raise ValueError("payload zu lang")
     return _with_checksum(bytes([SYNC_BYTE, command, len(payload)]) + payload)
+
+
+def cmd_scan() -> bytes:
+    """Einfacher Scanmodus, 5 Byte je Messung.
+
+    Beim C1 reicht der: 5000 Messungen/s x 5 Byte sind 25 kB/s, durch
+    460800 Baud passen rund 46 kB/s. Beim S2 mit 32000 Messungen/s waere
+    das nicht gegangen - daher dort der dense-capsuled Modus.
+    """
+    return cmd_simple(CMD_SCAN)
+
+
+def cmd_get_device_info() -> bytes:
+    return cmd_simple(CMD_GET_DEVICE_INFO)
+
+
+def cmd_get_health() -> bytes:
+    return cmd_simple(CMD_GET_DEVICE_HEALTH)
 
 
 def cmd_stop() -> bytes:
@@ -147,8 +165,97 @@ class Sample:
     """Eine einzelne Messung in der Scanebene des LiDAR."""
 
     angle_deg: float  # 0..360, LiDAR-eigener Winkel
-    distance_mm: int  # 0 == kein Echo
+    distance_mm: float  # 0 == kein Echo
     new_revolution: bool
+    #: Signalguete 0..63. Nur der einfache Scanmodus liefert sie.
+    quality: int = 0
+
+
+STANDARD_NODE_SIZE = 5
+
+
+class StandardScanParser:
+    """Byte-Strom -> Messungen im einfachen Scanmodus (Antworttyp 0x81).
+
+    Eine Messung sind 5 Byte:
+
+        Byte 0: Bit 0 = S (Umlaufmarke), Bit 1 = !S, Bit 2..7 = Guete
+        Byte 1: Bit 0 = C (Pruefbit, immer 1), Bit 1..7 = Winkel Q6, low
+        Byte 2: Winkel Q6, high
+        Byte 3..4: Distanz Q2 (u16 LE), 0 = kein Echo
+
+    Eine Pruefsumme gibt es nicht - die Gueltigkeit haengt allein an S != !S
+    und C == 1. Das reicht zum Resynchronisieren, weil ein falsch
+    ausgerichteter Strom diese beiden Bedingungen schnell verletzt.
+    """
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+        self.resyncs = 0
+        self.invalid_nodes = 0
+
+    def reset(self) -> None:
+        self._buf.clear()
+
+    @staticmethod
+    def _node_looks_valid(b0: int, b1: int) -> bool:
+        start = b0 & 0x01
+        start_inv = (b0 >> 1) & 0x01
+        check = b1 & 0x01
+        return start != start_inv and check == 1
+
+    def feed(self, data: bytes) -> Iterator[Sample]:
+        self._buf.extend(data)
+        buf = self._buf
+        while len(buf) >= STANDARD_NODE_SIZE:
+            if not self._node_looks_valid(buf[0], buf[1]):
+                del buf[0]
+                self.resyncs += 1
+                self.invalid_nodes += 1
+                continue
+
+            node = bytes(buf[:STANDARD_NODE_SIZE])
+            del buf[:STANDARD_NODE_SIZE]
+
+            quality = node[0] >> 2
+            new_revolution = bool(node[0] & 0x01)
+            angle_q6 = (node[1] >> 1) | (node[2] << 7)
+            distance_q2 = struct.unpack_from("<H", node, 3)[0]
+            yield Sample(
+                angle_deg=(angle_q6 / 64.0) % 360.0,
+                distance_mm=distance_q2 / 4.0,
+                new_revolution=new_revolution,
+                quality=quality,
+            )
+
+
+class RevolutionAssembler:
+    """Messungen -> vollstaendige Umdrehungen.
+
+    Eine Umdrehung endet, sobald die naechste Umlaufmarke kommt. Die erste,
+    angebrochene Umdrehung wird verworfen, damit jede gelieferte Umdrehung
+    wirklich vollstaendig ist.
+    """
+
+    def __init__(self) -> None:
+        self._current: List[Sample] = []
+        self._started = False
+        self.revolutions = 0
+
+    def reset(self) -> None:
+        self._current = []
+        self._started = False
+
+    def feed(self, samples: Iterable[Sample]) -> Iterator[List[Sample]]:
+        for sample in samples:
+            if sample.new_revolution:
+                if self._started and self._current:
+                    self.revolutions += 1
+                    yield self._current
+                self._current = []
+                self._started = True
+            if self._started:
+                self._current.append(sample)
 
 
 class CapsuleParser:

@@ -101,7 +101,7 @@ def sweep_plan(
     yaw_span_deg: float,
     yaw_step_deg: float,
     scan_hz: float = 10.0,
-    samples_per_second: float = 32000.0,
+    samples_per_second: float = 5000.0,
     plane_overhead_s: float = 0.05,
 ) -> dict:
     """Dauer, Punktzahl und Winkelaufloesung eines Sweeps vorausberechnen.

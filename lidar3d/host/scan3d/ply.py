@@ -6,6 +6,7 @@ oeffnen sich direkt in CloudCompare, MeshLab, Blender oder open3d.
 
 from __future__ import annotations
 
+import io
 import struct
 from typing import BinaryIO, Iterable, Optional, Sequence, Tuple
 
@@ -45,6 +46,26 @@ def write_ply(
             packer = struct.Struct("<fffBBB")
             for p, c in zip(points, colors):
                 fh.write(packer.pack(p[0], p[1], p[2], c[0], c[1], c[2]))
+
+
+def dumps_ply(
+    points: Sequence[Point],
+    colors: Optional[Sequence[Color]] = None,
+) -> bytes:
+    """Wie ``write_ply``, aber in den Speicher - fuer Downloads im Browser."""
+    if colors is not None and len(colors) != len(points):
+        raise ValueError("colors und points muessen gleich lang sein")
+    buffer = io.BytesIO()
+    _write_header(buffer, len(points), colors is not None)
+    if colors is None:
+        packer = struct.Struct("<fff")
+        for p in points:
+            buffer.write(packer.pack(*p))
+    else:
+        packer = struct.Struct("<fffBBB")
+        for p, c in zip(points, colors):
+            buffer.write(packer.pack(p[0], p[1], p[2], c[0], c[1], c[2]))
+    return buffer.getvalue()
 
 
 def _write_header(fh: BinaryIO, count: int, with_color: bool) -> None:

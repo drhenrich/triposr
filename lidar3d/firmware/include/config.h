@@ -6,16 +6,22 @@
 // --- Firmware -------------------------------------------------------------
 #define FW_VERSION 1
 
-// --- RPLIDAR S2 -----------------------------------------------------------
-// Der S2 spricht 3.3-V-TTL-UART mit 1 Mbaud, der ESP32-S3 auch: kein
-// Pegelwandler noetig. Versorgung 5 V, >2 W - nicht aus dem 3.3-V-Regler.
+// --- RPLIDAR C1 -----------------------------------------------------------
+// Der C1 spricht 3.3-V-TTL-UART mit 460800 Baud, der ESP32-S3 auch: kein
+// Pegelwandler noetig. Versorgung 5 V - nicht aus dem 3.3-V-Regler.
+//
+// ACHTUNG, noch offen: rplidar_s2.cpp startet den dense-capsuled Modus, den
+// der S2 zwingend braucht. Beim C1 reichen 5000 Messungen/s a 5 Byte
+// (25 kB/s von 46 kB/s) fuer den einfachen Scanmodus - der ist einfacher und
+// sicher unterstuetzt. Die Hostseite kann beides bereits
+// (scan3d/rplidar.py: StandardScanParser); die Firmware noch nicht.
 #define LIDAR_UART_NUM 1
 #define LIDAR_RX_PIN 18  // ESP32 empfaengt, geht an TX des LiDAR
 #define LIDAR_TX_PIN 17  // ESP32 sendet, geht an RX des LiDAR
-#define LIDAR_BAUDRATE 1000000
+#define LIDAR_BAUDRATE 460800
 #define LIDAR_RX_BUFFER 8192
-// 8N1 bei 1 Mbaud: 10 Bit je Byte -> 10 us. Fuer die Zeitstempel.
-#define LIDAR_BYTE_TIME_NS 10000
+// 8N1: 10 Bit je Byte. Bei 460800 Baud sind das 21701 ns.
+#define LIDAR_BYTE_TIME_NS 21701
 // 10 Hz Scanrate = 600 rpm. Erlaubt sind laut Datenblatt 8..15 Hz.
 #define LIDAR_RPM 600
 
@@ -60,7 +66,8 @@
 // waere es dieselbe Ebene. Damit entfaellt auch der Schleifring.
 #define YAW_MIN_DEG 0.0
 #define YAW_MAX_DEG 180.0
-// Abstand zwischen zwei Scanebenen. 1 Grad ergibt 180 Ebenen a 3200 Punkte.
+// Abstand zwischen zwei Scanebenen. 1 Grad ergibt beim C1 180 Ebenen
+// a rund 500 Punkte, zusammen etwa 90000 Punkte.
 #define YAW_PLANE_STEP_DEG 1.0
 
 // Wartezeit nach der Ankunft, bevor gemessen wird: Getriebe und Regelung
