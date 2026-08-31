@@ -7,8 +7,19 @@
 #define FW_VERSION 1
 
 // --- RPLIDAR C1 -----------------------------------------------------------
-// Der C1 spricht 3.3-V-TTL-UART mit 460800 Baud, der ESP32-S3 auch: kein
-// Pegelwandler noetig. Versorgung 5 V - nicht aus dem 3.3-V-Regler.
+// Anschlussweg: der C1 haengt mit seinem USB-C-Adapter am USB-Host-Port des
+// ESP32-S3 (LIDAR_LINK_USB 1, der Normalfall). Der Adapter ist ein
+// CDC-Seriell-Wandler; der Bytestrom ist derselbe wie an der UART.
+//
+// Auf 0 stellen, wenn der C1 stattdessen direkt an den TTL-Pins haengt - dann
+// gelten die LIDAR_*_PIN-Werte unten. Der C1 spricht 3.3-V-TTL mit 460800
+// Baud, der ESP32-S3 auch: kein Pegelwandler noetig. Versorgung in beiden
+// Faellen 5 V, nicht aus dem 3.3-V-Regler.
+#ifndef LIDAR_LINK_USB
+#define LIDAR_LINK_USB 1
+#endif
+// So lange wartet der Hochlauf darauf, dass sich der LiDAR am USB anmeldet.
+#define LIDAR_USB_WAIT_MS 3000
 //
 // Betriebsart: die Firmware versucht zuerst den einfachen Scanmodus. Beim C1
 // reichen dafuer 5000 Messungen/s a 5 Byte, also 25 kB/s von 46 kB/s. Nur

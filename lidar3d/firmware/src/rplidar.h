@@ -1,4 +1,7 @@
-// UART-Anbindung eines RPLIDAR an den ESP32-S3.
+// Slamtec-Protokoll eines RPLIDAR, unabhaengig vom Anschlussweg.
+//
+// Woher die Bytes kommen - USB-Host oder UART -, steckt hinter LidarLink.
+// Diese Klasse sieht nur den Bytestrom.
 //
 // Zwei Betriebsarten, je nach Geraet:
 //
@@ -13,10 +16,11 @@
 // Handshake und schiebt die gelesenen Bytes in den passenden Parser.
 #pragma once
 
-#include <driver/uart.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "dense_capsule.h"
+#include "lidar_link.h"
 #include "standard_scan.h"
 
 namespace nwl {
@@ -38,14 +42,19 @@ static const uint32_t kConfScanModeAnsType = 0x75;
 
 class RPLidar {
  public:
-  bool begin(uart_port_t port, int rxPin, int txPin, int baudrate, int rxBuffer);
+  // link muss die Firmware ueberleben - in der Praxis ein globales Objekt.
+  void begin(LidarLink *link);
 
   void stop();
   bool setMotorRpm(uint16_t rpm);
 
-  // Startet den einfachen Scanmodus (C1). Gibt true zurueck, wenn das Geraet
-  // mit dem Antworttyp 0x81 bestaetigt. Braucht keine Modusabfrage - der
-  // einfache Modus ist bei jedem RPLIDAR vorhanden.
+  // Startet den einfachen Scanmodus (C1). Braucht keine Modusabfrage - den
+  // einfachen Modus hat jeder RPLIDAR.
+  //
+  // Laesst der Anschlussweg kein Senden zu (canWrite() == false), wird nichts
+  // angefordert und true zurueckgegeben: dann bleibt nur die Hoffnung, dass
+  // der C1 von selbst scannt. Der Parser synchronisiert sich ohnehin selbst,
+  // also kostet der Versuch nichts.
   bool startStandardScan();
 
   // Fragt den typischen Scanmodus ab, prueft dass er Dense-Capsules liefert,
@@ -76,7 +85,7 @@ class RPLidar {
   bool getConf(uint32_t confType, const uint8_t *extra, uint8_t extraLen,
                uint8_t *out, size_t outLen, size_t &written);
 
-  uart_port_t port_ = UART_NUM_1;
+  LidarLink *link_ = nullptr;
   CapsuleParser parser_;
   StandardScanParser scanParser_;
   bool standard_ = false;

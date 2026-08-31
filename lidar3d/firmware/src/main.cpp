@@ -24,6 +24,11 @@
 #include "../include/config.h"
 #include "dense_capsule.h"
 #include "rplidar.h"
+#if LIDAR_LINK_USB
+#include "lidar_link_usb.h"
+#else
+#include "lidar_link_uart.h"
+#endif
 #include "stream_proto.h"
 #include "usb_ncm.h"
 #include "yaw_axis.h"
@@ -36,6 +41,11 @@ struct FrameMsg {
 };
 
 static RPLidar g_lidar;
+#if LIDAR_LINK_USB
+static UsbLidarLink g_link;
+#else
+static UartLidarLink g_link;
+#endif
 static YawAxis g_axis;
 static CapsuleDecoder g_decoder;
 static QueueHandle_t g_queue = nullptr;
@@ -346,10 +356,21 @@ void setup() {
   }
 
   if (g_faultCode == kFaultNone) {
-    if (!g_lidar.begin(static_cast<uart_port_t>(LIDAR_UART_NUM), LIDAR_RX_PIN,
-                       LIDAR_TX_PIN, LIDAR_BAUDRATE, LIDAR_RX_BUFFER)) {
-      setFault(kFaultLidarPort, "LiDAR-UART liess sich nicht oeffnen");
+#if LIDAR_LINK_USB
+    const bool linkUp = g_link.begin(LIDAR_BAUDRATE, LIDAR_USB_WAIT_MS);
+    const char *linkError =
+        "Kein LiDAR am USB-Host-Port. Kabel, Adapter und 5-V-Versorgung "
+        "pruefen (der C1 zieht mehr, als der USB-Port allein liefert).";
+#else
+    const bool linkUp = g_link.begin(static_cast<uart_port_t>(LIDAR_UART_NUM),
+                                     LIDAR_RX_PIN, LIDAR_TX_PIN,
+                                     LIDAR_BAUDRATE, LIDAR_RX_BUFFER);
+    const char *linkError = "LiDAR-UART liess sich nicht oeffnen";
+#endif
+    if (!linkUp) {
+      setFault(kFaultLidarPort, linkError);
     } else {
+      g_lidar.begin(&g_link);
       g_lidar.setMotorRpm(LIDAR_RPM);
       delay(1500);  // Anlauf des LiDAR-Motors abwarten
 

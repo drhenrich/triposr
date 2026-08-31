@@ -18,25 +18,26 @@
 # geaendert hat; eine Attrappe davon wuerde eine Vertrautheit vortaeuschen,
 # die nicht da ist.
 
+# Beide Anschlusswege werden geprueft. Der USB-Weg ist der Normalfall, aber
+# der UART-Weg ist die Rueckfallebene und darf nicht unbemerkt verrotten.
 SRC := ../../src
 CXX ?= g++
-CXXFLAGS := -std=gnu++17 -Wall -Wextra -Wshadow -g -Istubs -DARDUINO=200
+BASE := -std=gnu++17 -Wall -Wextra -Wshadow -g -Istubs -DARDUINO=200
+SOURCES := $(SRC)/main.cpp $(SRC)/rplidar.cpp $(SRC)/feetech_servo.cpp \
+           $(SRC)/yaw_axis.cpp $(SRC)/usb_ncm.cpp stubs.cpp
 
-OBJS := main.o rplidar.o feetech_servo.o yaw_axis.o usb_ncm.o stubs.o
-
-.PHONY: all clean
-all: compile_check
+.PHONY: all usb uart clean
+all: usb uart
 	@echo
 	@echo "Uebersetzung und Bindung fehlerfrei"
 
-compile_check: $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $(OBJS)
+usb:
+	@echo "== LiDAR am USB-Host (LIDAR_LINK_USB=1) =="
+	@$(CXX) $(BASE) -DLIDAR_LINK_USB=1 -o check_usb $(SOURCES)
 
-%.o: $(SRC)/%.cpp
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
-
-stubs.o: stubs.cpp
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+uart:
+	@echo "== LiDAR an der UART (LIDAR_LINK_USB=0) =="
+	@$(CXX) $(BASE) -DLIDAR_LINK_USB=0 -o check_uart $(SOURCES)
 
 clean:
-	@rm -f *.o compile_check
+	@rm -f *.o check_usb check_uart compile_check

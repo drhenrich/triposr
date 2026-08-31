@@ -12,28 +12,10 @@ namespace nwl {
 static const uint8_t kSyncByte = 0xA5;
 static const uint8_t kSyncByte2 = 0x5A;
 
-bool RPLidar::begin(uart_port_t port, int rxPin, int txPin, int baudrate,
-                      int rxBuffer) {
-  port_ = port;
-
-  uart_config_t cfg = {};
-  cfg.baud_rate = baudrate;
-  cfg.data_bits = UART_DATA_8_BITS;
-  cfg.parity = UART_PARITY_DISABLE;
-  cfg.stop_bits = UART_STOP_BITS_1;
-  cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
-  cfg.source_clk = UART_SCLK_DEFAULT;
-
-  if (uart_driver_install(port_, rxBuffer, 0, 0, nullptr, 0) != ESP_OK) return false;
-  if (uart_param_config(port_, &cfg) != ESP_OK) return false;
-  if (uart_set_pin(port_, txPin, rxPin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) !=
-      ESP_OK) {
-    return false;
-  }
-  uart_flush_input(port_);
+void RPLidar::begin(LidarLink *link) {
+  link_ = link;
   parser_.reset();
   scanParser_.reset();
-  return true;
 }
 
 bool RPLidar::sendCommand(uint8_t command, const uint8_t *payload, uint8_t len) {
@@ -50,15 +32,20 @@ bool RPLidar::sendCommand(uint8_t command, const uint8_t *payload, uint8_t len) 
     for (size_t i = 0; i < n; ++i) checksum ^= frame[i];
     frame[n++] = checksum;
   }
-  return uart_write_bytes(port_, reinterpret_cast<const char *>(frame), n) ==
-         static_cast<int>(n);
+  return link_ != nullptr && link_->write(frame, n);
 }
 
 bool RPLidar::readDescriptor(uint32_t &length, uint8_t &dataType,
                                uint32_t timeoutMs) {
+  if (link_ == nullptr) return false;
   uint8_t raw[7];
-  int got = uart_read_bytes(port_, raw, sizeof(raw), pdMS_TO_TICKS(timeoutMs));
-  if (got != static_cast<int>(sizeof(raw))) return false;
+  // Der Deskriptor kann in mehreren Haeppchen ankommen, besonders ueber USB.
+  size_t got = 0;
+  const uint32_t slice = timeoutMs / 4 + 1;
+  for (int attempt = 0; attempt < 4 && got < sizeof(raw); ++attempt) {
+    got += link_->read(raw + got, sizeof(raw) - got, slice);
+  }
+  if (got != sizeof(raw)) return false;
   if (raw[0] != kSyncByte || raw[1] != kSyncByte2) return false;
   uint32_t word = static_cast<uint32_t>(raw[2]) | (static_cast<uint32_t>(raw[3]) << 8) |
                   (static_cast<uint32_t>(raw[4]) << 16) |
@@ -71,7 +58,7 @@ bool RPLidar::readDescriptor(uint32_t &length, uint8_t &dataType,
 void RPLidar::stop() {
   sendCommand(kCmdStop, nullptr, 0);
   vTaskDelay(pdMS_TO_TICKS(20));
-  uart_flush_input(port_);
+  if (link_ != nullptr) link_->flushInput();
   parser_.reset();
   scanParser_.reset();
   standard_ = false;
@@ -104,8 +91,11 @@ bool RPLidar::getConf(uint32_t confType, const uint8_t *extra, uint8_t extraLen,
 
   uint8_t body[64];
   if (respLen > sizeof(body)) return false;
-  int got = uart_read_bytes(port_, body, respLen, pdMS_TO_TICKS(500));
-  if (got != static_cast<int>(respLen) || respLen < 4) return false;
+  size_t got = 0;
+  for (int attempt = 0; attempt < 4 && got < respLen; ++attempt) {
+    got += link_->read(body + got, respLen - got, 125);
+  }
+  if (got != respLen || respLen < 4) return false;
 
   // Die ersten 4 Byte spiegeln den angefragten Typ.
   written = respLen - 4;
@@ -146,7 +136,17 @@ int RPLidar::startDenseScan() {
 }
 
 bool RPLidar::startStandardScan() {
+  if (link_ == nullptr) return false;
   stop();
+
+  if (!link_->canWrite()) {
+    // Kein Rueckkanal: nichts anfordern, einfach zuhoeren. Der Parser
+    // synchronisiert sich ueber die Pruefbits selbst, also schadet der
+    // Versuch nichts - er gelingt nur dann, wenn der C1 von sich aus scannt.
+    scanParser_.reset();
+    standard_ = true;
+    return true;
+  }
 
   // Keine Modusabfrage noetig: der einfache Scan ist bei jedem RPLIDAR da,
   // und beim C1 ist er ohnehin der einzige, den es gibt.
@@ -164,18 +164,20 @@ bool RPLidar::startStandardScan() {
 }
 
 void RPLidar::pollScan(ScanSampleSink sink, void *ctx, uint32_t waitMs) {
-  int got = uart_read_bytes(port_, chunk_, sizeof(chunk_), pdMS_TO_TICKS(waitMs));
-  if (got <= 0) return;
-  scanParser_.feed(chunk_, static_cast<size_t>(got), sink, ctx);
+  if (link_ == nullptr) return;
+  size_t got = link_->read(chunk_, sizeof(chunk_), waitMs);
+  if (got == 0) return;
+  scanParser_.feed(chunk_, got, sink, ctx);
 }
 
 void RPLidar::poll(CapsuleSink sink, void *ctx, uint32_t waitMs) {
-  int got = uart_read_bytes(port_, chunk_, sizeof(chunk_), pdMS_TO_TICKS(waitMs));
-  if (got <= 0) return;
-  // uart_read_bytes kehrt zurueck, sobald der Puffer voll ist oder die Zeit um
-  // ist; das letzte Byte ist also gerade eingetroffen.
+  if (link_ == nullptr) return;
+  size_t got = link_->read(chunk_, sizeof(chunk_), waitMs);
+  if (got == 0) return;
+  // read() kehrt zurueck, sobald etwas da ist oder die Zeit um ist; das letzte
+  // Byte ist also gerade eingetroffen.
   int64_t now = esp_timer_get_time();
-  parser_.feed(chunk_, static_cast<size_t>(got), now, LIDAR_BYTE_TIME_NS, sink, ctx);
+  parser_.feed(chunk_, got, now, LIDAR_BYTE_TIME_NS, sink, ctx);
 }
 
 }  // namespace nwl

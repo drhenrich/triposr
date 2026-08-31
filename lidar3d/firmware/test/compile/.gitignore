@@ -1,2 +1,4 @@
 *.o
+check_usb
+check_uart
 compile_check
