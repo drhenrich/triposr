@@ -48,6 +48,46 @@ volle Kugel ab; 360° zu fahren würde jeden Punkt nur ein zweites Mal messen.
 
 Praktische Folge: eine Kabelschlaufe statt eines Schleifrings.
 
+## Warum die Drehachse senkrecht steht (Z, nicht X)
+
+Rechnerisch ist die Frage entschieden, bevor sie gestellt wird: 180° um **jede**
+Achse decken die volle Kugel ab, solange die Scanebene die Achse enthält. Die
+Formeln sind identisch, nur anders beschriftet. Die Wahl fällt also allein an
+der Mechanik — und dort ist sie eindeutig.
+
+**Die Schwerkraft entscheidet.** Steht die Achse senkrecht, wirkt das Gewicht
+des LiDAR (110 g) *entlang* der Welle. Der Servo trägt es axial, das Halten
+einer Position kostet ihn kein Drehmoment. Läge die Achse waagerecht, hinge der
+Kopf seitlich heraus: das Lastmoment wechselt mit jedem Schritt, ist bei
+waagerecht ausgestrecktem Kopf maximal, und der Servo müsste dauerhaft
+dagegenhalten — Strom, Wärme, und eine Positionsabweichung, die mit dem Winkel
+schwankt. Bei einer Aufnahme mit 180 Ebenen à 150 ms sind das 27 s unter Last
+statt 27 s im Leerlauf.
+
+**Die Verdeckung fällt dorthin, wo nichts ist.** Bei senkrechter Achse liegen
+Stativ und Servo *unter* dem LiDAR und verdecken den Kegel nach unten — den
+Boden direkt unter dem Gerät, also die uninteressanteste Stelle im Raum. Bei
+waagerechter Achse säße der Servo *neben* dem Kopf und schnitte ein Stück Wand
+heraus.
+
+**Die Auswuchtung ist einfacher.** Auf einer senkrechten Welle lässt sich das
+optische Zentrum auf die Achse legen, `offset_radial` wird null, und die
+Parallaxenkorrektur entfällt. Um eine waagerechte Welle bräuchte es eine Wiege,
+sonst ist der Versatz konstruktiv da.
+
+**Die Punktdichte gibt nichts her.** Sie ist an den Polen hoch und am Äquator
+niedrig (siehe unten) — bei senkrechter Achse also dicht an Decke und Boden,
+dünn an den Wänden. Das klingt nach einem Argument für die waagerechte Achse,
+ist aber keins: dort lägen die Pole auf zwei gegenüberliegenden Wänden, und der
+dünnste Bereich enthielte dann Decke, Boden *und* die beiden anderen Wände. Die
+schlechteste Auflösung bleibt in beiden Fällen gleich, sie wandert nur.
+
+**Und die Anzeige rechnet mit Z.** Höhenfärbung, „Von oben", die Konturprüfung
+in `host/scan3d/quality.py` und die Schätzung der Nulllage in `alignment.py`
+setzen alle voraus, dass die Drehachse die Hochachse ist. Eine waagerechte
+Achse hieße nicht nur andere Mechanik, sondern auch: alle diese Werkzeuge
+messen etwas anderes als das, wonach sie benannt sind.
+
 ## Punktdichte
 
 Die Dichte ist stark ungleichmäßig — dicht an den Polen der Drehachse, dünn am
