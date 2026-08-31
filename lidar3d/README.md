@@ -235,9 +235,30 @@ Implementierungen — bevor Hardware im Spiel ist.
 Der Scanner liefert seine Anzeige selbst aus. Kein Xcode, keine Signierung,
 kein Provisioning:
 
-1. Firmware flashen (`pio run -e wifi -t upload`).
+1. Firmware flashen — `platformio.ini` liegt in `lidar3d/firmware/`:
+
+   ```bash
+   cd lidar3d/firmware
+   pio run -e wifi -t upload
+   pio device monitor
+   ```
 2. Am iPhone ins WLAN **`lidar3d`** (Passwort `scanmemaybe`).
 3. Safari öffnen, **`http://192.168.4.1/`**.
+
+### Ohne Servo: der Freilauf
+
+Der Aufbau lässt sich in zwei Schritten prüfen. Fehlt die Gierachse noch,
+startet der LiDAR trotzdem und misst weiter — alles landet dann in der Ebene
+bei 0°. Das ist keine 3D-Aufnahme, sondern der **Aufbautest**: er beantwortet,
+ob Verkabelung, Baudrate, Dekoder, Geometrie und Anzeige zusammenspielen,
+bevor der Servo überhaupt angeschlossen ist.
+
+Zu sehen ist dann ein senkrechter Schnitt durch den Raum — Decke, Boden,
+Wände —, und der Zustand heißt `Freilauf`. Ist er da, stimmt die ganze Kette
+bis auf die Drehung.
+
+Erst wenn der Servo dazukommt, wird aus dem Schnitt eine Wolke: die Achse
+öffnet dann je Ebene ein Messfenster, und **Sweep** fährt 180° ab.
 
 Die Seite zeigt die Punktwolke live, während der Sweep läuft — drehen mit
 einem Finger, zoomen mit zwei. Sie enthält alles, was sie braucht: der
