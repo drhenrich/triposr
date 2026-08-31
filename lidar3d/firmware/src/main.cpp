@@ -16,6 +16,7 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -69,6 +70,33 @@ static char g_faultText[kFaultMaxTextLen + 1] = "";
 // Baudrate, Dekoder, Geometrie und Anzeige zusammenspielen, bevor der Servo
 // ueberhaupt angeschlossen ist.
 static bool g_axisReady = false;
+
+// Warum der ESP32 zuletzt neu gestartet ist. Leer, wenn es nichts zu sagen
+// gibt. Der Brownout ist der Fall, der zaehlt: der Anlaufstrom des
+// LiDAR-Motors reisst die 5 V ein, das Board startet neu - mitten im Sweep,
+// und die halbe Wolke ist weg, ohne dass jemand den Grund saehe.
+static const char *g_bootNote = "";
+
+static void checkResetReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_BROWNOUT:
+      g_bootNote =
+          "Neustart durch Unterspannung. Der LiDAR braucht einen eigenen "
+          "5-V-Zweig und einen Elko (470-1000 uF) - nicht den 5-V-Pin des "
+          "Boards.";
+      break;
+    case ESP_RST_PANIC:
+      g_bootNote = "Neustart nach einem Absturz der Firmware.";
+      break;
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:
+      g_bootNote = "Neustart durch den Watchdog.";
+      break;
+    default:
+      break;
+  }
+  if (g_bootNote[0] != '\0') Serial.printf("ACHTUNG: %s\n", g_bootNote);
+}
 
 // Ebenenerfassung: die Achse oeffnet das Fenster, aber gezaehlt wird erst ab
 // der ersten Umlaufmarke des LiDAR. Zwischen erster und zweiter Marke liegt
@@ -366,7 +394,8 @@ static void netTask(void *) {
       if (greeted) sendStatus(client);
       g_web.sendStatus(stateLabel(), g_axis.sweepIndex(),
                        g_axis.yawQ16Now() / 65536.0f,
-                       g_faultCode != kFaultNone ? g_faultText : nullptr);
+                       g_faultCode != kFaultNone ? g_faultText : nullptr,
+                       g_bootNote);
     }
     lastState = now;
 
@@ -407,6 +436,7 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("\nlidar3d - RPLIDAR auf Gierachse");
+  checkResetReason();
 
   // Das Netz kommt zuerst, und zwar vor jeder Hardwarepruefung.
   //
@@ -447,8 +477,9 @@ void setup() {
     // Ohne Servo waeren alle Gierwinkel gelogen, also gibt es keinen Sweep.
     // Der LiDAR laeuft aber trotzdem - siehe Freilauf oben.
     setFault(kFaultServo,
-             "Kein Servo. Der LiDAR laeuft im Freilauf, alles landet in der "
-             "Ebene bei 0 Grad. Fuer 3D fehlt der STS3215.");
+             "Kein Servo (STS3215). Der LiDAR laeuft trotzdem, aber im "
+             "Freilauf: alles landet in der Ebene bei 0 Grad. Fuer 3D fehlt "
+             "die Gierachse.");
   } else {
     Serial.printf("Gierachse: Servo-Modell %u, %u Ebenen a %.2f deg, "
                   "Encoderaufloesung %.4f deg\n",

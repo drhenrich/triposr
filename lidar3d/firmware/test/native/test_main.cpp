@@ -619,6 +619,42 @@ static void testRangeFilterMatchesTheC1() {
   CHECK(!range.accepts(12001.0f));  // hinter der Reichweite
 }
 
+static void testMaxFrameSizeCoversEveryFrame() {
+  CASE("Protokoll: kMaxFrameSize deckt wirklich jeden Frametyp ab");
+  // Jeder Sender legt sich einen Puffer dieser Groesse auf den Stapel. Fehlt
+  // hier ein Frametyp, schreibt writeXxxFrame darueber hinaus - und das faellt
+  // beim Testen nie auf, sondern erst als seltsamer Absturz auf dem Geraet.
+  CHECK(kCapsuleFrameSize <= kMaxFrameSize);
+  CHECK(kScanMaxFrameSize <= kMaxFrameSize);
+  CHECK(kFaultMaxFrameSize <= kMaxFrameSize);
+  CHECK(kHeaderSize + kHelloPayloadSize <= kMaxFrameSize);
+  CHECK(kHeaderSize + kStatusPayloadSize <= kMaxFrameSize);
+
+  // Und die Probe aufs Exempel: der laengstmoegliche Fehlertext passt hinein.
+  uint8_t buf[kMaxFrameSize];
+  std::string longest(kFaultMaxTextLen, 'x');
+  size_t n = writeFaultFrame(buf, 0, kFaultServo, longest.c_str());
+  CHECK_EQ(n, kFaultMaxFrameSize);
+  CHECK(n <= sizeof(buf));
+}
+
+static void testFaultTextIsLongEnoughForTheRealMessages() {
+  CASE("Protokoll: die echten Meldungen werden nicht abgeschnitten");
+  // Bei 96 Zeichen endete die Servo-Meldung mitten im Wort ("... fehlt de"),
+  // still und leise. Die Laengen hier stammen aus main.cpp.
+  static const char *messages[] = {
+    "Kein Servo (STS3215). Der LiDAR laeuft trotzdem, aber im Freilauf: alles "
+    "landet in der Ebene bei 0 Grad. Fuer 3D fehlt die Gierachse.",
+    "Kein LiDAR am USB-Host-Port. Kabel, Adapter und 5-V-Versorgung pruefen "
+    "(der C1 zieht mehr, als der USB-Port allein liefert).",
+    "Kein Scanmodus startbar. Versorgung (5 V, >2 W) und Baudrate pruefen "
+    "(C1 460800, S2 1 Mbaud).",
+    "LiDAR-UART liess sich nicht oeffnen",
+    "Speicher fuer die Frame-Queue reicht nicht",
+  };
+  for (const char *m : messages) CHECK(std::strlen(m) <= kFaultMaxTextLen);
+}
+
 static void testFaultFrameCapsTheText() {
   CASE("Protokoll: ueberlanger Fehlertext wird gekappt");
   uint8_t buf[kMaxFrameSize];
@@ -776,6 +812,8 @@ int main(int argc, char **argv) {
   testGeometryMatchesTheHost();
   testGeometryHalfTurnCoversTheSphere();
   testRangeFilterMatchesTheC1();
+  testMaxFrameSizeCoversEveryFrame();
+  testFaultTextIsLongEnoughForTheRealMessages();
   testFaultFrameCapsTheText();
   testFaultFrameHandlesEmptyText();
   testWireFormat(fixture);

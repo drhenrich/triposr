@@ -3,6 +3,7 @@
 #include "stubs/Arduino.h"
 #include "stubs/WiFi.h"
 #include "stubs/driver/uart.h"
+#include "stubs/esp_system.h"
 #include "stubs/esp_timer.h"
 #include "stubs/freertos/queue.h"
 #include "stubs/freertos/task.h"
@@ -11,6 +12,8 @@ SerialStub Serial;
 WiFiClass WiFi;
 
 int64_t esp_timer_get_time() { return 0; }
+
+esp_reset_reason_t esp_reset_reason() { return ESP_RST_POWERON; }
 
 QueueHandle_t xQueueCreate(unsigned, unsigned) { return nullptr; }
 BaseType_t xQueueSend(QueueHandle_t, const void *, TickType_t) { return pdTRUE; }

@@ -33,7 +33,7 @@ FAULT_SERVO = 1        # STS3215 antwortet nicht
 FAULT_LIDAR_PORT = 2   # UART zum LiDAR liess sich nicht oeffnen
 FAULT_LIDAR_SCAN = 3   # kein Scanmodus liess sich starten
 FAULT_QUEUE = 4        # Speicher fuer die Frame-Queue fehlt
-FAULT_MAX_TEXT_LEN = 96
+FAULT_MAX_TEXT_LEN = 160
 
 FLAG_NEW_REVOLUTION = 1 << 0
 FLAG_SWEEP_ACTIVE = 1 << 1

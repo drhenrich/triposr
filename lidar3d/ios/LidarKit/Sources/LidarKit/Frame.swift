@@ -260,7 +260,7 @@ public struct ScanFrame: Sendable, MeasurementFrame {
 }
 
 public struct FaultFrame: Sendable {
-    public static let maxTextLength = 96
+    public static let maxTextLength = 160
 
     public let seq: UInt16
     public let code: FaultCode

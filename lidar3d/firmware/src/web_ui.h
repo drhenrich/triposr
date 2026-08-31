@@ -29,12 +29,18 @@ color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,sans-serif}
 canvas{display:block;width:100%;height:100%;touch-action:none}
 .panel{position:fixed;background:rgba(19,28,36,.88);border:1px solid var(--line);
 border-radius:3px;backdrop-filter:blur(12px)}
-#hud{top:max(12px,env(safe-area-inset-top));left:12px;padding:10px 14px;min-width:170px}
+/* Beide Kaesten liegen in einem Streifen, der umbricht. Vorher standen sie
+   fix links und rechts und ueberlappten sich auf einem Telefon: die Meldung
+   deckte den halben HUD zu. */
+#top{position:fixed;top:max(12px,env(safe-area-inset-top));left:12px;right:12px;
+display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;pointer-events:none}
+#top>*{pointer-events:auto}
+#hud{position:static;padding:10px 14px;min-width:190px}
 #hud .eyebrow{font:10px/1 ui-monospace,monospace;letter-spacing:.14em;
 text-transform:uppercase;color:var(--accent);margin-bottom:8px}
 #hud dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0;
 font:11px/1.6 ui-monospace,monospace;font-variant-numeric:tabular-nums}
-#hud dt{color:var(--muted)}#hud dd{margin:0;text-align:right}
+#hud dt{color:var(--muted)}#hud dd{margin:0;text-align:right;white-space:nowrap}
 #bar{left:50%;transform:translateX(-50%);bottom:max(12px,env(safe-area-inset-bottom));
 display:flex;gap:10px;padding:9px 12px;align-items:center}
 button{font:11px/1 ui-monospace,monospace;letter-spacing:.06em;color:var(--ink);
@@ -42,27 +48,33 @@ background:#1B2732;border:1px solid var(--line);border-radius:3px;
 padding:9px 15px;cursor:pointer}
 button:active{background:#243342}
 button.on{background:var(--accent);border-color:var(--accent);color:#0B1016}
-#note{top:max(12px,env(safe-area-inset-top));right:12px;max-width:min(320px,60vw);
+#note{position:static;flex:1 1 240px;max-width:420px;
 padding:10px 14px;border-left:2px solid var(--warn);display:none}
 #note b{display:block;font-size:12px;margin-bottom:3px}
-#note span{font-size:12px;color:var(--muted)}
+#note span{display:block;font-size:12px;color:var(--muted);overflow-wrap:break-word}
+#note .boot{margin-top:6px;padding-top:6px;border-top:1px solid var(--line);
+color:var(--accent)}
 </style></head><body>
 <canvas id="c"></canvas>
-<div class="panel" id="hud">
-  <div class="eyebrow" id="link">verbinde …</div>
-  <dl>
-    <dt>Punkte</dt><dd id="n">0</dd>
-    <dt>Ebenen</dt><dd id="pl">0</dd>
-    <dt>Gierwinkel</dt><dd id="yaw">–</dd>
-    <dt>Zustand</dt><dd id="st">–</dd>
-  </dl>
+<div id="top">
+  <div class="panel" id="hud">
+    <div class="eyebrow" id="link">verbinde …</div>
+    <dl>
+      <dt>Punkte</dt><dd id="n">0</dd>
+      <dt>Ebenen</dt><dd id="pl">0</dd>
+      <dt>Gierwinkel</dt><dd id="yaw">–</dd>
+      <dt>Zustand</dt><dd id="st">–</dd>
+    </dl>
+  </div>
+  <div class="panel" id="note">
+    <b id="nt"></b><span id="nx"></span><span class="boot" id="nb"></span>
+  </div>
 </div>
-<div class="panel" id="note"><b id="nt"></b><span id="nx"></span></div>
 <div class="panel" id="bar">
   <button id="go">Sweep</button>
   <button id="stop">Stop</button>
   <button id="clr">Leeren</button>
-  <button id="top">Von oben</button>
+  <button id="fromtop">Von oben</button>
 </div>
 <script>
 "use strict";
@@ -202,16 +214,21 @@ function status(s){
   $("pl").textContent = s.planes;
   $("yaw").textContent = s.yaw.toFixed(1)+"°";
   planes = s.planes;
-  if(s.fault){ $("note").style.display="block"; $("nt").textContent="Scanner meldet";
-    $("nx").textContent = s.fault; }
-  else $("note").style.display="none";
+  const boot = s.boot || "";
+  $("nx").textContent = s.fault || "";
+  $("nb").textContent = boot;
+  $("nb").style.display = boot ? "block" : "none";
+  if(s.fault || boot){
+    $("note").style.display = "block";
+    $("nt").textContent = s.fault ? "Scanner meldet" : "Hinweis";
+  } else $("note").style.display = "none";
   $("go").classList.toggle("on", s.state === "Sweep");
 }
 const send=t=>{ if(ws && ws.readyState===1) ws.send(t) };
 $("go").onclick   = ()=>send("S");
 $("stop").onclick = ()=>send("X");
 $("clr").onclick  = ()=>{ count=0; lo=-1; hi=2; $("n").textContent="0" };
-$("top").onclick  = ()=>{ pitch=1.45; yaw=0.9; dist=8 };
+$("fromtop").onclick = ()=>{ pitch=1.45; yaw=0.9; dist=8 };
 connect();
 </script></body></html>)HTML";
 

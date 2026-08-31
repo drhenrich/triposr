@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "../include/config.h"
+#include "stream_proto.h"
 #include "web_ui.h"
 
 namespace nwl {
@@ -29,9 +30,11 @@ int *g_viewerCount = nullptr;
 // count * 3 float32 (x, y, z in Metern, little endian) - so, wie sie im
 // Speicher stehen, ohne Umkopieren.
 const uint8_t kMsgPoints = 1;
-const size_t kHeaderSize = 4;
+// Nicht kHeaderSize nennen - so heisst schon der Kopf der Firmware-Frames in
+// stream_proto.h, und das ist ein anderes Protokoll.
+const size_t kPointHeaderSize = 4;
 
-uint8_t g_frame[kHeaderSize + kWebBatchPoints * sizeof(Point3)];
+uint8_t g_frame[kPointHeaderSize + kWebBatchPoints * sizeof(Point3)];
 
 void onWsEvent(uint8_t client, WStype_t type, uint8_t *payload, size_t length) {
   switch (type) {
@@ -95,15 +98,20 @@ bool WebStream::pushPoints(const Point3 *points, int count) {
 }
 
 void WebStream::sendStatus(const char *state, uint16_t planes, float yawDeg,
-                           const char *fault) {
+                           const char *fault, const char *boot) {
   if (viewers_ == 0) return;
-  char json[240];
-  // Der Fehlertext kommt aus der Firmware, nicht von aussen - er enthaelt
-  // keine Anfuehrungszeichen. Trotzdem gekappt, damit der Puffer reicht.
+  // Gross genug fuer beide Texte in voller Laenge plus Geruest. Zu knapp
+  // bemessen wuerde snprintf das JSON mitten im String abschneiden, und die
+  // Seite bekaeme gar keinen Zustand mehr - der Fehler waere schlimmer als
+  // die Meldung.
+  char json[2 * kFaultMaxTextLen + 160];
+  // Beide Texte stammen aus der Firmware, nicht von aussen; sie enthalten
+  // keine Anfuehrungszeichen.
   snprintf(json, sizeof(json),
-           "{\"state\":\"%s\",\"planes\":%u,\"yaw\":%.1f,\"fault\":\"%.120s\"}",
+           "{\"state\":\"%s\",\"planes\":%u,\"yaw\":%.1f,"
+           "\"fault\":\"%s\",\"boot\":\"%s\"}",
            state, static_cast<unsigned>(planes), static_cast<double>(yawDeg),
-           fault != nullptr ? fault : "");
+           fault != nullptr ? fault : "", boot != nullptr ? boot : "");
   g_ws.broadcastTXT(json);
 }
 
@@ -126,8 +134,8 @@ void WebStream::loop() {
     g_frame[2] = static_cast<uint8_t>(batch.count);
     g_frame[3] = static_cast<uint8_t>(batch.count >> 8);
     const size_t bytes = batch.count * sizeof(Point3);
-    memcpy(g_frame + kHeaderSize, batch.points, bytes);
-    g_ws.broadcastBIN(g_frame, kHeaderSize + bytes);
+    memcpy(g_frame + kPointHeaderSize, batch.points, bytes);
+    g_ws.broadcastBIN(g_frame, kPointHeaderSize + bytes);
   }
 }
 

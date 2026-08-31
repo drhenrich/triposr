@@ -63,11 +63,24 @@ static const size_t kScanMaxPayloadSize =
 static const size_t kScanMaxFrameSize = kHeaderSize + kScanMaxPayloadSize;  // 148
 
 // Fehlerframe: Code plus Klartext, damit die App sagen kann, was fehlt.
-static const size_t kFaultMaxTextLen = 96;
+//
+// 160 Zeichen, nicht 96: bei 96 wurde die Servo-Meldung mitten im Wort
+// abgeschnitten ("... Fuer 3D fehlt de"), und zwar unbemerkt - snprintf kappt
+// stillschweigend. Ein Fehlertext, der selbst kaputtgeht, ist keiner.
+static const size_t kFaultMaxTextLen = 160;
 static const size_t kFaultMaxPayloadSize = 2 + kFaultMaxTextLen;
+static const size_t kFaultMaxFrameSize = kHeaderSize + kFaultMaxPayloadSize;
 
+// Der groesste Frame ueberhaupt. Alle Sender legen sich einen Puffer dieser
+// Groesse auf den Stapel - fehlt hier ein Frametyp, schreibt er darueber
+// hinaus. Deshalb prueft firmware/test/native, dass hier wirklich das Maximum
+// steht.
 static const size_t kMaxFrameSize =
-    kCapsuleFrameSize > kScanMaxFrameSize ? kCapsuleFrameSize : kScanMaxFrameSize;
+    (kCapsuleFrameSize > kScanMaxFrameSize
+         ? (kCapsuleFrameSize > kFaultMaxFrameSize ? kCapsuleFrameSize
+                                                   : kFaultMaxFrameSize)
+         : (kScanMaxFrameSize > kFaultMaxFrameSize ? kScanMaxFrameSize
+                                                   : kFaultMaxFrameSize));
 
 namespace detail {
 inline void put16(uint8_t *p, uint16_t v) {

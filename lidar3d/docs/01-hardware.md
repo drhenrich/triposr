@@ -153,6 +153,16 @@ Regeln:
   rote Kabel gehört dorthin, nicht an das Board.
 * Elko 470–1000 µF direkt am 5-V-Eingang des LiDAR. Der Anlaufstrom des
   Motors reißt sonst die Spannung ein, und der LiDAR bootet mitten im Sweep neu.
+
+> **`rst:0xf (BROWNOUT_RST)`** im seriellen Log heißt genau das: die Spannung
+> ist unter die Schwelle gefallen und der ESP32 hat sich neu gestartet. Beim
+> Hochlauf mag das nur lästig sein — mitten im Sweep ist die halbe Wolke weg,
+> und ohne diesen Hinweis sucht man den Fehler in der Software.
+>
+> Die Firmware liest den Grund des letzten Neustarts aus und zeigt ihn an:
+> auf der seriellen Konsole als `ACHTUNG:` und auf der Webseite als Hinweis
+> im Meldungskasten. Abhilfe ist immer dieselbe: eigener 5-V-Zweig für den
+> LiDAR, Elko dicht am Stecker, kurze und dicke Masseleitung.
 * Der Servo läuft an 12 V. Im Leerlauf zieht er nur 180 mA, blockiert aber
   2,7 A — das Netzteil muss die Spitze beim Anfahren liefern können, sonst
   bricht die Spannung ein und der ESP32 startet neu.

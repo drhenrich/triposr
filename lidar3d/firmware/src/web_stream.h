@@ -50,9 +50,11 @@ class WebStream {
   // verwerfen als den LiDAR bremsen.
   bool pushPoints(const Point3 *points, int count);
 
-  // Zustandszeile fuer die Seite. fault darf nullptr sein.
+  // Zustandszeile fuer die Seite. fault und boot duerfen nullptr sein.
+  // boot ist der Grund des letzten Neustarts, sofern er etwas bedeutet -
+  // ein Brownout etwa erklaert, warum eine Wolke ploetzlich abbricht.
   void sendStatus(const char *state, uint16_t planes, float yawDeg,
-                  const char *fault);
+                  const char *fault, const char *boot);
 
   bool hasViewer() const { return viewers_ > 0; }
   uint32_t dropped() const { return dropped_; }
