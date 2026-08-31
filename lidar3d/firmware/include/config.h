@@ -91,9 +91,23 @@
 // --- Einbaulage -----------------------------------------------------------
 // Abstand des optischen Zentrums von der Gierachse (radial) und seine Hoehe
 // (axial), in Mikrometern. Messen und eintragen - siehe docs/02-geometrie.md.
-// Die Firmware rechnet damit nicht, sie meldet die Werte nur im Hello-Frame.
 #define MOUNT_OFFSET_RADIAL_UM 0
 #define MOUNT_OFFSET_AXIAL_UM 0
+
+// Der LiDAR-Winkel, der nach oben zeigt. DER WICHTIGSTE WERT HIER.
+//
+// Der C1 zaehlt seine Winkel ab einer Marke am Gehaeuse. Liegt er flach,
+// zeigt die waagerecht nach vorn; hochkant montiert zeigt sie zur Seite -
+// also rund 90 Grad versetzt. Stuende hier 0, wuerde der Abstand zur Decke
+// als Radius verrechnet und beim Drehen zu einem Zylinder verschmiert: der
+// Raum saehe rund aus, und die Wolke waere hoeher als breit.
+//
+// 89 statt 90: an einer echten Aufnahme gemessen, ueber die Hoehe, bei der
+// Decke und Boden waagerecht werden (host/scan3d/alignment.py). Der eigene
+// Aufbau kann ein paar Grad daneben liegen - nachmessen lohnt.
+#define MOUNT_ALPHA_ZERO_DEG 89.0f
+// -1, wenn die Wolke auf dem Kopf steht (Decke unten).
+#define MOUNT_ALPHA_SIGN 1.0f
 
 // --- Netzwerk -------------------------------------------------------------
 // Beide Transporte koennen gleichzeitig laufen; der TCP-Server lauscht auf
@@ -130,6 +144,11 @@
 // und startet einen Sweep. 0: der Client muss 'S' senden.
 #define AUTO_START_ON_CONNECT 1
 
-// Ringpuffer zwischen LiDAR-Task und Netz-Task. 256 Frames a 104 Byte sind
-// rund 27 kB und puffern etwa 320 ms - genug fuer WLAN-Aussetzer.
+// Ringpuffer zwischen LiDAR-Task und Netz-Task. 256 Frames a 150 Byte sind
+// rund 38 kB und puffern etwa 320 ms - genug fuer WLAN-Aussetzer.
 #define FRAME_QUEUE_LENGTH 256
+
+// Ringpuffer fuer die Webseite: 16 Buendel a 60 Punkte sind rund 12 kB und
+// puffern etwa 190 ms. Laeuft er ueber, gehen Punkte verloren - das ist
+// gewollt, der LiDAR soll deswegen nicht warten.
+#define WEB_BATCH_QUEUE_LENGTH 16

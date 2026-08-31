@@ -19,6 +19,7 @@
 #include "../../src/angle_util.h"
 #include "../../src/dense_capsule.h"
 #include "../../src/feetech_bus.h"
+#include "../../src/geometry.h"
 #include "../../src/standard_scan.h"
 #include "../../src/stream_proto.h"
 #include "../../src/sweep_plan.h"
@@ -557,6 +558,67 @@ static void testWireFormat(const char *fixturePath) {
   CHECK(toHex(buf, n) == fixture["fault"]);
 }
 
+// --- Geometrie auf dem Geraet --------------------------------------------
+
+static void testGeometryMatchesTheHost() {
+  CASE("Geometrie: dieselben Zahlen wie host/scan3d/geometry.py");
+  // Erzeugt mit to_cartesian() aus dem Pythonpaket. Laufen die beiden
+  // Implementierungen auseinander, zeigt die Webseite eine andere Wolke als
+  // der Host aus derselben Aufnahme - und niemand merkt es.
+  struct Case {
+    float distanceMm, alphaDeg, yawDeg;
+    MountGeometry mount;
+    float x, y, z;
+  };
+  static const Case cases[] = {
+    {2500.0f, 0.0f, 0.0f, {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+     0.000000f, 0.000000f, 2.500000f},
+    {2500.0f, 90.0f, 0.0f, {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+     2.500000f, 0.000000f, 0.000000f},
+    {2500.0f, 90.0f, 90.0f, {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+     0.000000f, 2.500000f, 0.000000f},
+    {2500.0f, 200.0f, 37.0f, {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+     -0.682874f, -0.514582f, -2.349232f},
+    {1500.0f, 45.0f, 120.0f, {-40.5f, 12.0f, 0.0f, 1.0f, 0.0f, 1.0f},
+     -0.510080f, 0.883485f, 1.072660f},
+    // Die Nulllage, die dieser Aufbau wirklich braucht.
+    {1500.0f, 45.0f, 120.0f, {0.0f, 0.0f, 89.0f, 1.0f, 0.0f, 1.0f},
+     0.520994f, -0.902388f, 1.079010f},
+    {1000.0f, 30.0f, 10.0f, {0.0f, 0.0f, 0.0f, -1.0f, 0.0f, -1.0f},
+     -0.492404f, 0.086824f, 0.866025f},
+  };
+  for (const Case &c : cases) {
+    Point3 p = toCartesian(c.distanceMm, c.alphaDeg, c.yawDeg, c.mount);
+    CHECK(std::fabs(p.x - c.x) < 1e-4);
+    CHECK(std::fabs(p.y - c.y) < 1e-4);
+    CHECK(std::fabs(p.z - c.z) < 1e-4);
+  }
+}
+
+static void testGeometryHalfTurnCoversTheSphere() {
+  CASE("Geometrie: 180 Grad Gieren decken die ganze Kugel ab");
+  // Der Grund, warum kein Schleifring noetig ist: der radiale Anteil wird
+  // negativ, sobald alpha ueber 180 Grad geht - derselbe Gierwinkel liefert
+  // also beide Himmelsrichtungen.
+  MountGeometry mount;
+  Point3 front = toCartesian(1000.0f, 90.0f, 0.0f, mount);
+  Point3 back = toCartesian(1000.0f, 270.0f, 0.0f, mount);
+  CHECK(std::fabs(front.x - 1.0f) < 1e-4);
+  CHECK(std::fabs(back.x + 1.0f) < 1e-4);
+  CHECK(std::fabs(front.z) < 1e-4);
+  CHECK(std::fabs(back.z) < 1e-4);
+}
+
+static void testRangeFilterMatchesTheC1() {
+  CASE("Geometrie: Gueltigkeitsfenster des C1");
+  RangeFilter range;
+  CHECK(!range.accepts(0.0f));      // kein Echo
+  CHECK(!range.accepts(100.0f));    // Blindzone
+  CHECK(range.accepts(1500.0f));
+  CHECK(range.accepts(12000.0f));
+  CHECK(!range.accepts(12001.0f));  // hinter der Reichweite
+}
+
 static void testFaultFrameCapsTheText() {
   CASE("Protokoll: ueberlanger Fehlertext wird gekappt");
   uint8_t buf[kMaxFrameSize];
@@ -711,6 +773,9 @@ int main(int argc, char **argv) {
   testStandardScanResync();
   testStandardScanSplitFeeds();
   testStandardScanRoundsQuarterMillimetres();
+  testGeometryMatchesTheHost();
+  testGeometryHalfTurnCoversTheSphere();
+  testRangeFilterMatchesTheC1();
   testFaultFrameCapsTheText();
   testFaultFrameHandlesEmptyText();
   testWireFormat(fixture);

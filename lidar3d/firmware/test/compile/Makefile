@@ -24,7 +24,7 @@ SRC := ../../src
 CXX ?= g++
 BASE := -std=gnu++17 -Wall -Wextra -Wshadow -g -Istubs -DARDUINO=200
 SOURCES := $(SRC)/main.cpp $(SRC)/rplidar.cpp $(SRC)/feetech_servo.cpp \
-           $(SRC)/yaw_axis.cpp $(SRC)/usb_ncm.cpp stubs.cpp
+           $(SRC)/yaw_axis.cpp $(SRC)/usb_ncm.cpp $(SRC)/web_stream.cpp stubs.cpp
 
 .PHONY: all usb uart clean
 all: usb uart

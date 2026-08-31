@@ -230,6 +230,25 @@ Die Swift-Seite bringt aber eigene Tests mit: ein `swift test` auf dem Mac
 prüft den Decoder gegen dieselbe Byte-Fixture wie die anderen beiden
 Implementierungen — bevor Hardware im Spiel ist.
 
+## Am schnellsten zum Bild: die Webseite
+
+Der Scanner liefert seine Anzeige selbst aus. Kein Xcode, keine Signierung,
+kein Provisioning:
+
+1. Firmware flashen (`pio run -e wifi -t upload`).
+2. Am iPhone ins WLAN **`lidar3d`** (Passwort `scanmemaybe`).
+3. Safari öffnen, **`http://192.168.4.1/`**.
+
+Die Seite zeigt die Punktwolke live, während der Sweep läuft — drehen mit
+einem Finger, zoomen mit zwei. Sie enthält alles, was sie braucht: der
+Renderer sind zwei kleine WebGL-Shader, keine Bibliothek. Das ist kein
+Geiz, sondern Notwendigkeit — am Accesspoint des Scanners gibt es kein
+Internet und damit kein CDN.
+
+Die Punkte kommen gebündelt über einen WebSocket, 60 Stück je Frame und
+binär. Ein Textframe je Punkt wären bei 5.000 Messungen/s 5.000 Frames pro
+Sekunde; das hält weder der ESP32 noch das WLAN durch.
+
 **Wenn der ESP32 kein WLAN aufspannt**, ist die Firmware entweder nicht
 geflasht, oder sie ist eine Fassung vor diesem Stand: bis dahin kam das Netz
 erst nach den Hardwareprüfungen hoch, und jede blieb im Fehlerfall stehen.
