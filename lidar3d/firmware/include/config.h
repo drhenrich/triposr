@@ -7,16 +7,14 @@
 #define FW_VERSION 1
 
 // --- RPLIDAR C1 -----------------------------------------------------------
-// Anschlussweg: der C1 haengt mit seinem USB-C-Adapter am USB-Host-Port des
-// ESP32-S3 (LIDAR_LINK_USB 1, der Normalfall). Der Adapter ist ein
-// CDC-Seriell-Wandler; der Bytestrom ist derselbe wie an der UART.
+// Anschlussweg: der C1 haengt direkt an den TTL-Pins, ohne den USB-Adapter
+// (LIDAR_LINK_USB 0, der Normalfall).
 //
-// Auf 0 stellen, wenn der C1 stattdessen direkt an den TTL-Pins haengt - dann
-// gelten die LIDAR_*_PIN-Werte unten. Der C1 spricht 3.3-V-TTL mit 460800
-// Baud, der ESP32-S3 auch: kein Pegelwandler noetig. Versorgung in beiden
-// Faellen 5 V, nicht aus dem 3.3-V-Regler.
+// Auf 1 stellen, wenn stattdessen der USB-C-Adapter am USB-Host-Port des
+// ESP32-S3 steckt. Dann wird zusaetzlich die Bibliothek EspUsbHost gebraucht -
+// siehe platformio.ini.
 #ifndef LIDAR_LINK_USB
-#define LIDAR_LINK_USB 1
+#define LIDAR_LINK_USB 0
 #endif
 // So lange wartet der Hochlauf darauf, dass sich der LiDAR am USB anmeldet.
 #define LIDAR_USB_WAIT_MS 3000
@@ -25,9 +23,18 @@
 // reichen dafuer 5000 Messungen/s a 5 Byte, also 25 kB/s von 46 kB/s. Nur
 // wenn er sich nicht starten laesst, weicht sie auf die Dense-Capsules aus,
 // die der S2 bei 32000 Messungen/s zwingend braucht. Siehe rplidar.h.
+// Kabelfarben des C1 und wohin sie gehen. Die Datenleitungen werden
+// UEBERKREUZT: was der eine sendet, empfaengt der andere.
+//
+//   rot     VCC   5 V   eigener Zweig, nicht der 3.3-V-Regler
+//   gelb    TX    3.3 V an LIDAR_RX_PIN  (der ESP32 empfaengt hier)
+//   gruen   RX    3.3 V an LIDAR_TX_PIN  (der ESP32 sendet hier)
+//   schwarz GND   0 V
+//
+// Beide Seiten arbeiten mit 3.3-V-Logik, ein Pegelwandler ist nicht noetig.
 #define LIDAR_UART_NUM 1
-#define LIDAR_RX_PIN 18  // ESP32 empfaengt, geht an TX des LiDAR
-#define LIDAR_TX_PIN 17  // ESP32 sendet, geht an RX des LiDAR
+#define LIDAR_RX_PIN 18  // ESP32 empfaengt: an das GELBE Kabel (TX des LiDAR)
+#define LIDAR_TX_PIN 17  // ESP32 sendet:   an das GRUENE Kabel (RX des LiDAR)
 #define LIDAR_BAUDRATE 460800
 #define LIDAR_RX_BUFFER 8192
 // 8N1: 10 Bit je Byte. Bei 460800 Baud sind das 21701 ns.

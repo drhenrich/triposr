@@ -82,21 +82,34 @@ Rückseite des Auslegers ist billiger als eine steifere Achse.
 
 ## Verkabelung
 
-### RPLIDAR S2 ↔ ESP32-S3
+### RPLIDAR C1 ↔ ESP32-S3
 
-Der S2 spricht 3,3-V-TTL, der ESP32-S3 auch — **kein Pegelwandler nötig**.
+Der C1 spricht 3,3-V-TTL, der ESP32-S3 auch — **kein Pegelwandler nötig**.
+Der USB-C-Adapter bleibt weg; er wird nur gebraucht, wenn der LiDAR an einem
+PC hängt.
 
-| S2 | ESP32-S3 | Anmerkung |
-|---|---|---|
-| GND | GND | gemeinsame Masse, großzügig dimensioniert |
-| 5 V | **nicht** vom ESP32 | eigener Step-Down, siehe unten |
-| TX | GPIO 18 (RX) | |
-| RX | GPIO 17 (TX) | |
+| Kabel | Signal | an den ESP32-S3 | Anmerkung |
+|---|---|---|---|
+| ● rot | VCC | **nicht** vom ESP32 | 5 V (4,8–5,2 V), eigener Zweig — siehe Stromversorgung |
+| ● gelb | TX | **GPIO 18** (RX) | der LiDAR sendet, der ESP32 empfängt |
+| ● grün | RX | **GPIO 17** (TX) | der ESP32 sendet, der LiDAR empfängt |
+| ● schwarz | GND | GND | gemeinsame Masse, großzügig dimensioniert |
 
-Die genaue Steckerbelegung steht im Datenblatt, das dem Gerät beiliegt; der
-S2 wird üblicherweise mit einem Adapterboard ausgeliefert, das GND, 5 V, TX
-und RX herausführt. Vor dem ersten Anschließen mit dem Datenblatt abgleichen —
-diese Belegung hier nicht aus dem Kopf annehmen.
+**Die Datenleitungen werden überkreuzt.** Gelb an RX, grün an TX — was der
+eine sendet, empfängt der andere. Vertauscht kommt kein einziges Byte an, und
+zwar völlig geräuschlos: der LiDAR dreht sich trotzdem, weil der Motor
+unabhängig läuft.
+
+Feste Baudrate **460.800**, in `config.h` als `LIDAR_BAUDRATE` eingetragen.
+Der C1 kann nichts anderes.
+
+> **Achtung, Pinbelegung prüfen.** GPIO 17 ist hier der LiDAR-TX. Ältere
+> Aufbauten und viele Beispielsketche legen den **Servo** auf 16/17
+> (`SerialServo.begin(1000000, SERIAL_8N1, 16, 17)`). Dann kollidiert der
+> Servo-TX mit dem LiDAR-TX, und einer von beiden schweigt. In `config.h`
+> liegt der Servo auf **15/16** — entweder danach verdrahten, oder die
+> `#define`s an die eigene Verdrahtung anpassen. Zwei UARTs dürfen sich
+> keinen Pin teilen.
 
 ### STS3215 ↔ ESP32-S3
 
@@ -136,7 +149,8 @@ Das ist die Stelle, an der solche Aufbauten am häufigsten scheitern.
 Regeln:
 
 * Der LiDAR bekommt **seinen eigenen 5-V-Zweig** direkt vom Step-Down, nicht
-  den 5-V-Pin des ESP32-Devkits und schon gar nicht dessen 3,3-V-Regler.
+  den 5-V-Pin des ESP32-Devkits und schon gar nicht dessen 3,3-V-Regler. Das
+  rote Kabel gehört dorthin, nicht an das Board.
 * Elko 470–1000 µF direkt am 5-V-Eingang des LiDAR. Der Anlaufstrom des
   Motors reißt sonst die Spannung ein, und der LiDAR bootet mitten im Sweep neu.
 * Der Servo läuft an 12 V. Im Leerlauf zieht er nur 180 mA, blockiert aber
